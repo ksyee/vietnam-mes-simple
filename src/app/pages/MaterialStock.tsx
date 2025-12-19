@@ -6,24 +6,35 @@ import { Checkbox } from '../components/ui/checkbox';
 import { Label } from '../components/ui/label';
 import { Search, Filter, Download } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
-
-const mockStockData = [
-  { id: 1, code: 'M-001', name: '터미널 A-Type', category: '단자', stock: 150, safeStock: 500, unit: 'EA', status: 'danger' },
-  { id: 2, code: 'W-203', name: 'UL1007 24AWG Red', category: '전선', stock: 20, safeStock: 100, unit: 'M', status: 'danger' },
-  { id: 3, code: 'H-055', name: 'Housing 4P White', category: '하우징', stock: 80, safeStock: 200, unit: 'EA', status: 'warning' },
-  { id: 4, code: 'S-102', name: 'Silicon Seal Blue', category: '방수전', stock: 1200, safeStock: 500, unit: 'EA', status: 'good' },
-  { id: 5, code: 'T-882', name: 'Tube 3mm Black', category: '튜브', stock: 50, safeStock: 50, unit: 'M', status: 'warning' },
-  { id: 6, code: 'M-002', name: '터미널 B-Type', category: '단자', stock: 0, safeStock: 300, unit: 'EA', status: 'exhausted' },
-];
+import { useMaterial } from '../context/MaterialContext';
 
 export const MaterialStock = () => {
   const [showExhausted, setShowExhausted] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Use Global Context
+  const { materials } = useMaterial();
 
-  const filteredData = mockStockData.filter(item => {
-    if (!showExhausted && item.stock === 0) return false;
-    return item.name.includes(searchQuery) || item.code.includes(searchQuery);
-  });
+  const getStatus = (stock: number, safeStock: number) => {
+    if (stock === 0) return 'exhausted';
+    if (stock < safeStock * 0.3) return 'danger'; // 30% 미만 위험
+    if (stock < safeStock) return 'warning'; // 안전재고 미만 경고
+    return 'good';
+  };
+
+  const filteredData = materials
+    .map(item => ({
+      ...item,
+      status: getStatus(item.stock, item.safeStock)
+    }))
+    .filter(item => {
+      if (!showExhausted && item.stock === 0) return false;
+      const query = searchQuery.toLowerCase();
+      return (
+        item.name.toLowerCase().includes(query) || 
+        item.code.toLowerCase().includes(query)
+      );
+    });
 
   return (
     <div className="space-y-6">

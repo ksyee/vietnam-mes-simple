@@ -10,42 +10,45 @@ import { ReportView } from './pages/ReportView';
 import { MaterialReceiving } from './pages/MaterialReceiving';
 import { MaterialStock } from './pages/MaterialStock';
 import { Settings } from './pages/Settings';
+import { MaterialProvider } from './context/MaterialContext';
 
 function App() {
   return (
-    <HashRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        
-        {/* Protected Routes Wrapper */}
-        <Route element={<MainLayout />}>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Dashboard />} />
+    <MaterialProvider>
+      <HashRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
           
-          {/* Material Management */}
-          <Route path="/material/receiving" element={<MaterialReceiving />} />
-          <Route path="/material/stock" element={<MaterialStock />} />
+          {/* Protected Routes Wrapper */}
+          <Route element={<MainLayout />}>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            
+            {/* Material Management */}
+            <Route path="/material/receiving" element={<MaterialReceiving />} />
+            <Route path="/material/stock" element={<MaterialStock />} />
 
-          {/* Production Processes */}
-          <Route path="/process/:processId" element={<ProcessView />} />
-          
-          {/* Quality Inspection */}
-          <Route path="/inspection/:type" element={<InspectionView />} />
-          
-          {/* Reports & Inquiry */}
-          <Route path="/report/:reportId" element={<ReportView />} />
-          
-          {/* Master Data */}
-          <Route path="/master/:type" element={<MasterData />} />
+            {/* Production Processes */}
+            <Route path="/process/:processId" element={<ProcessView />} />
+            
+            {/* Quality Inspection */}
+            <Route path="/inspection/:type" element={<InspectionView />} />
+            
+            {/* Reports & Inquiry */}
+            <Route path="/report/:reportId" element={<ReportView />} />
+            
+            {/* Master Data */}
+            <Route path="/master/:type" element={<MasterData />} />
 
-          {/* System Settings */}
-          <Route path="/settings" element={<Settings />} />
-        </Route>
+            {/* System Settings */}
+            <Route path="/settings" element={<Settings />} />
+          </Route>
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </HashRouter>
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </HashRouter>
+    </MaterialProvider>
   );
 }
 
