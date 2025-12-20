@@ -7,6 +7,8 @@ import { Label } from '../components/ui/label';
 import { Search, Filter, Download } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { useMaterial } from '../context/MaterialContext';
+import { downloadExcel } from '@/lib/excelUtils';
+import { toast } from 'sonner';
 
 export const MaterialStock = () => {
   const [showExhausted, setShowExhausted] = useState(false);
@@ -20,6 +22,30 @@ export const MaterialStock = () => {
     if (stock < safeStock * 0.3) return 'danger'; // 30% 미만 위험
     if (stock < safeStock) return 'warning'; // 안전재고 미만 경고
     return 'good';
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'good': return '정상';
+      case 'warning': return '경고';
+      case 'danger': return '위험';
+      case 'exhausted': return '소진';
+      default: return status;
+    }
+  };
+
+  const handleDownloadExcel = () => {
+    const exportData = materials.map(item => ({
+      '상태': getStatusText(getStatus(item.stock, item.safeStock)),
+      '품번': item.code,
+      '품명': item.name,
+      '분류': item.category,
+      '현재고': item.stock,
+      '안전재고': item.safeStock,
+      '단위': item.unit
+    }));
+    downloadExcel(exportData, '재고현황', '재고목록');
+    toast.success('재고 현황이 다운로드되었습니다.');
   };
 
   const filteredData = materials
@@ -40,7 +66,7 @@ export const MaterialStock = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800">재고 현황 조회</h2>
-        <Button variant="outline">
+        <Button variant="outline" onClick={handleDownloadExcel}>
           <Download className="mr-2 h-4 w-4" />
           엑셀 다운로드
         </Button>

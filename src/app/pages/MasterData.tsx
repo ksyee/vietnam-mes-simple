@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
 import { useMaterial, Material } from '../context/MaterialContext';
+import { downloadTemplate } from '@/lib/excelUtils';
 
 export const MasterData = () => {
   const { type } = useParams<{ type: string }>();
@@ -85,6 +86,12 @@ export const MasterData = () => {
   const handleDelete = (id: number) => {
     deleteMaterial(id);
     toast.success('자재가 삭제되었습니다.');
+  };
+
+  const handleDownloadTemplate = () => {
+    const headers = ['코드', '품명', '규격/사양', '단위', '유형', '안전재고', '설명'];
+    downloadTemplate(headers, '자재등록_양식', '자재양식');
+    toast.success('양식 파일이 다운로드되었습니다.');
   };
 
   const renderMaterialTable = () => (
@@ -239,7 +246,7 @@ export const MasterData = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-2xl font-bold text-slate-800">{getTitle()}</h2>
         <div className="flex gap-2">
-          <Button variant="outline">
+          <Button variant="outline" onClick={handleDownloadTemplate}>
             <FileDown className="mr-2 h-4 w-4" /> 양식
           </Button>
           <Button variant="outline">

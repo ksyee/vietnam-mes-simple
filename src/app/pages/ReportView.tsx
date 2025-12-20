@@ -9,6 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popove
 import { format } from 'date-fns';
 import { Calendar as CalendarIcon, Search, Download, Filter } from 'lucide-react';
 import { clsx } from 'clsx';
+import { downloadExcel } from '@/lib/excelUtils';
+import { toast } from 'sonner';
 
 export const ReportView = () => {
   const { reportId } = useParams<{ reportId: string }>();
@@ -20,6 +22,36 @@ export const ReportView = () => {
       case 'trace': return 'LOT 추적 (Traceability)';
       case 'input-history': return '투입 이력 조회 (Input History)';
       default: return '보고서';
+    }
+  };
+
+  const handleDownloadExcel = () => {
+    if (reportId === 'production') {
+      const data = [1, 2, 3, 4, 5].map(i => ({
+        '날짜': '2023-12-18',
+        '공정': '자동절압착',
+        '품번': `P-100${i}`,
+        '품명': 'Wire Harness Type-A',
+        '생산수량': 1000 * i,
+        '불량수량': 5 * i,
+        '직행률(%)': `99.${9 - i}%`
+      }));
+      downloadExcel(data, '생산현황', '생산리포트');
+      toast.success('생산 현황이 다운로드되었습니다.');
+    } else if (reportId === 'input-history') {
+      const data = [1, 2, 3, 4, 5].map(i => ({
+        '투입일시': `2023-12-18 10:0${i}:00`,
+        '완제품 LOT': `PA-20231218-00${i}`,
+        '공정': '제품조립 (PA)',
+        '투입 자재 코드': `M-WIRE-00${i}`,
+        '투입 자재명': 'UL1007 Wire Black',
+        '자재 LOT': `L-MAT-00${i}`,
+        '투입수량': `${10 * i} M`
+      }));
+      downloadExcel(data, '투입이력', '투입이력');
+      toast.success('투입 이력이 다운로드되었습니다.');
+    } else {
+      toast.info('LOT 추적은 검색 후 다운로드 가능합니다.');
     }
   };
 
@@ -104,7 +136,7 @@ export const ReportView = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-2xl font-bold text-slate-800">{getTitle()}</h2>
         <div className="flex gap-2">
-          <Button variant="outline"><Download size={16} className="mr-2"/> 엑셀 다운로드</Button>
+          <Button variant="outline" onClick={handleDownloadExcel}><Download size={16} className="mr-2"/> 엑셀 다운로드</Button>
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { useDropzone } from 'react-dropzone';
 import { Upload, ScanBarcode, FileSpreadsheet, Check, X, PackagePlus } from 'lucide-react';
 import { toast } from 'sonner';
+import { downloadTemplate } from '@/lib/excelUtils';
 
 export const MaterialReceiving = () => {
   const [barcode, setBarcode] = useState('');
@@ -17,6 +18,12 @@ export const MaterialReceiving = () => {
   };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop });
+
+  const handleDownloadTemplate = () => {
+    const headers = ['바코드', '품명', '수량', '단위'];
+    downloadTemplate(headers, '자재입고_양식', '입고양식');
+    toast.success('양식 파일이 다운로드되었습니다.');
+  };
 
   const handleScan = (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +49,7 @@ export const MaterialReceiving = () => {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-slate-800">자재 입고 관리</h2>
         <div className="flex gap-2">
-          <Button variant="outline">
+          <Button variant="outline" onClick={handleDownloadTemplate}>
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             양식 다운로드
           </Button>
