@@ -639,10 +639,59 @@ winget install PostgreSQL.PostgreSQL.17
 
 ---
 
+## TODO: BOM Level 구현 계획
+
+> **트리거**: "내일 뭘해야 하지?" 질문 시 이 섹션 안내
+
+### 현재 상태
+- BOM 데이터 Excel Import 완료
+- BOM 트리 UI (품번별 그룹핑, 펼침/접기) 구현 완료
+- **미구현**: BOM Level (LV) 자동 산출
+
+### 문제점
+- 업로드 파일에 LV 항목이 없어 모든 자재가 LV=1로 표시됨
+- 절압착품번(crimpCode)으로 자재 구분 가능하나 트리에 반영되지 않음
+
+### 제안된 구현 방안
+
+**2-Level 트리 구조** (절압착품번 기반 그룹핑):
+
+```
+L0: 완제품 (productCode: 00315452)
+├─ L1: 절압착품번 그룹 (crimpCode: 00315452-001)
+│  └─ L2: 절압 자재들 (CA 공정 자재)
+├─ L1: 절압착품번 그룹 (crimpCode: 00315452-002)
+│  └─ L2: 절압 자재들 (CA 공정 자재)
+└─ L1: 직접 자재 (crimpCode 없음)
+   └─ MC/SB/SP 공정 자재들
+```
+
+### 구분 기준
+| 절압착품번 | 공정 | 설명 |
+|-----------|------|------|
+| 있음 | CA | 자동절단압착 자재 |
+| 없음 | MC/SB/SP | 수동압착/서브조립/스플라이스 자재 |
+
+### 구현 단계
+1. BOMItem 인터페이스에 `crimpCode` 필드 추가
+2. Excel Import 시 crimpCode 매핑
+3. BOMContext에서 crimpCode 기반 3-Level 그룹핑 구현
+4. MasterData.tsx BOM 트리 UI 수정 (3-Level 표시)
+
+### 관련 파일
+- `src/app/context/BOMContext.tsx` - BOMItem 타입 수정, bomGroups 로직 변경
+- `src/app/pages/MasterData.tsx` - BOM 트리 UI (type='bom' 섹션)
+- `src/services/excelImportService.ts` - Excel Import 매핑
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
 |------|------|
+| 2025-12-21 | Excel Import → Context 연동 (ProductContext, BOMContext 생성, 일괄등록 함수 addProducts/addMaterials/addBOMItems) |
+| 2025-12-21 | BOM 트리 UI 구현 (품번별 그룹핑, 펼침/접기 토글, 자재 목록 테이블) |
+| 2025-12-21 | React state batching 버그 수정 (forEach+setState → 일괄 setState) |
 | 2025-12-21 | Windows 환경 설정 (PostgreSQL 17, WSL 연동, 설정 스크립트, 실행 가이드) |
 | 2025-12-21 | MBOM 시스템 구현 (7단계: DB 스키마, 공정 마스터, 반제품 품번, MBOM 서비스, 공정 라우팅, SET 번들, UI 컴포넌트) |
 | 2025-12-20 | 4단계 마무리 기능 구현 (Excel Import, 백업/복원, 다국어 ko/vi, Electron 프린터 IPC) |

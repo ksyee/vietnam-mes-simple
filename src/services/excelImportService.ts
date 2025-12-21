@@ -2,13 +2,11 @@
  * Excel Import Service
  *
  * xlsx 라이브러리를 사용한 Excel 파일 Import
- * - 제품, 자재, BOM, 재고 일괄 등록
+ * - 제품, 자재, BOM, 재고 일괄 등록 (브라우저 호환)
  * - 데이터 유효성 검사
- * - 중복 처리 (덮어쓰기/스킵)
+ * - 파싱된 데이터를 result.data에 반환 (DB 저장은 별도 처리)
  */
 import * as XLSX from 'xlsx'
-import prisma from '@/lib/prisma'
-import type { Product, Material, BOM, MaterialStock } from '@prisma/client'
 
 // ============================================
 // Types
@@ -168,24 +166,29 @@ export async function importProducts(
     importedRows: 0,
     skippedRows: 0,
     errors: [],
+    data: [],
   }
 
   try {
     const workbook = await parseExcelFile(file)
-    let data = sheetToJson<ProductImportRow>(workbook, options)
+    let data = sheetToJson<Record<string, unknown>>(workbook, options)
+
+    // 한글 헤더 매핑 적용
+    data = applyKoreanHeaderMapping<ProductImportRow>(data, 'product') as unknown as Record<string, unknown>[]
 
     // 컬럼 매핑 적용
     if (options.columnMapping) {
       data = applyColumnMapping<ProductImportRow>(
-        data as unknown as Record<string, unknown>[],
+        data,
         options.columnMapping
-      )
+      ) as unknown as Record<string, unknown>[]
     }
 
-    result.totalRows = data.length
+    const typedData = data as unknown as ProductImportRow[]
+    result.totalRows = typedData.length
 
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i]
+    for (let i = 0; i < typedData.length; i++) {
+      const row = typedData[i]
       const rowNum = i + 2 // Excel 행 번호 (1-based + 헤더)
 
       // 필수 필드 검사
@@ -198,54 +201,19 @@ export async function importProducts(
         continue
       }
 
-      try {
-        // 중복 체크
-        const existing = await prisma.product.findUnique({
-          where: { code: String(row.code) },
-        })
+      // 브라우저 환경에서는 Prisma 사용 불가
+      // 파싱된 데이터를 결과에 추가
+      result.data?.push({
+        code: String(row.code),
+        name: String(row.name),
+        spec: row.spec ? String(row.spec) : null,
+        type: row.type || 'FINISHED',
+        processCode: row.processCode ? String(row.processCode) : null,
+        crimpCode: row.crimpCode ? String(row.crimpCode) : null,
+        description: row.description ? String(row.description) : null,
+      })
 
-        if (existing) {
-          if (options.skipDuplicates) {
-            result.skippedRows++
-            continue
-          }
-
-          // 덮어쓰기
-          await prisma.product.update({
-            where: { code: String(row.code) },
-            data: {
-              name: String(row.name),
-              spec: row.spec ? String(row.spec) : null,
-              type: row.type || 'FINISHED',
-              processCode: row.processCode ? String(row.processCode) : null,
-              crimpCode: row.crimpCode ? String(row.crimpCode) : null,
-              description: row.description ? String(row.description) : null,
-            },
-          })
-        } else {
-          // 신규 등록
-          await prisma.product.create({
-            data: {
-              code: String(row.code),
-              name: String(row.name),
-              spec: row.spec ? String(row.spec) : null,
-              type: row.type || 'FINISHED',
-              processCode: row.processCode ? String(row.processCode) : null,
-              crimpCode: row.crimpCode ? String(row.crimpCode) : null,
-              description: row.description ? String(row.description) : null,
-            },
-          })
-        }
-
-        result.importedRows++
-      } catch (error) {
-        result.errors.push({
-          row: rowNum,
-          message: error instanceof Error ? error.message : '등록 실패',
-          value: row,
-        })
-        result.skippedRows++
-      }
+      result.importedRows++
     }
 
     result.success = result.errors.length === 0
@@ -274,7 +242,7 @@ export interface MaterialImportRow {
 }
 
 /**
- * 자재 일괄 등록
+ * 자재 일괄 등록 (브라우저 호환)
  */
 export async function importMaterials(
   file: File,
@@ -286,23 +254,28 @@ export async function importMaterials(
     importedRows: 0,
     skippedRows: 0,
     errors: [],
+    data: [],
   }
 
   try {
     const workbook = await parseExcelFile(file)
-    let data = sheetToJson<MaterialImportRow>(workbook, options)
+    let data = sheetToJson<Record<string, unknown>>(workbook, options)
+
+    // 한글 헤더 매핑 적용
+    data = applyKoreanHeaderMapping<MaterialImportRow>(data, 'material') as unknown as Record<string, unknown>[]
 
     if (options.columnMapping) {
       data = applyColumnMapping<MaterialImportRow>(
-        data as unknown as Record<string, unknown>[],
+        data,
         options.columnMapping
-      )
+      ) as unknown as Record<string, unknown>[]
     }
 
-    result.totalRows = data.length
+    const typedData = data as unknown as MaterialImportRow[]
+    result.totalRows = typedData.length
 
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i]
+    for (let i = 0; i < typedData.length; i++) {
+      const row = typedData[i]
       const rowNum = i + 2
 
       // 필수 필드 검사
@@ -315,48 +288,19 @@ export async function importMaterials(
         continue
       }
 
-      try {
-        const existing = await prisma.material.findUnique({
-          where: { code: String(row.code) },
-        })
+      // 브라우저 환경에서는 Prisma 사용 불가
+      // 파싱된 데이터를 결과에 추가
+      result.data?.push({
+        code: String(row.code),
+        name: String(row.name),
+        spec: row.spec ? String(row.spec) : null,
+        category: String(row.category),
+        unit: String(row.unit),
+        safeStock: row.safeStock ? Number(row.safeStock) : 0,
+        description: row.description ? String(row.description) : null,
+      })
 
-        const materialData = {
-          name: String(row.name),
-          spec: row.spec ? String(row.spec) : null,
-          category: String(row.category),
-          unit: String(row.unit),
-          safeStock: row.safeStock ? Number(row.safeStock) : 0,
-          description: row.description ? String(row.description) : null,
-        }
-
-        if (existing) {
-          if (options.skipDuplicates) {
-            result.skippedRows++
-            continue
-          }
-
-          await prisma.material.update({
-            where: { code: String(row.code) },
-            data: materialData,
-          })
-        } else {
-          await prisma.material.create({
-            data: {
-              code: String(row.code),
-              ...materialData,
-            },
-          })
-        }
-
-        result.importedRows++
-      } catch (error) {
-        result.errors.push({
-          row: rowNum,
-          message: error instanceof Error ? error.message : '등록 실패',
-          value: row,
-        })
-        result.skippedRows++
-      }
+      result.importedRows++
     }
 
     result.success = result.errors.length === 0
@@ -384,7 +328,7 @@ export interface BOMImportRow {
 }
 
 /**
- * BOM 일괄 등록
+ * BOM 일괄 등록 (브라우저 호환)
  */
 export async function importBOM(
   file: File,
@@ -396,133 +340,52 @@ export async function importBOM(
     importedRows: 0,
     skippedRows: 0,
     errors: [],
+    data: [],
   }
 
   try {
     const workbook = await parseExcelFile(file)
-    let data = sheetToJson<BOMImportRow>(workbook, options)
+    let data = sheetToJson<Record<string, unknown>>(workbook, options)
+
+    // 한글 헤더 매핑 적용
+    data = applyKoreanHeaderMapping<BOMImportRow>(data, 'bom') as unknown as Record<string, unknown>[]
 
     if (options.columnMapping) {
       data = applyColumnMapping<BOMImportRow>(
-        data as unknown as Record<string, unknown>[],
+        data,
         options.columnMapping
-      )
+      ) as unknown as Record<string, unknown>[]
     }
 
-    result.totalRows = data.length
+    const typedData = data as unknown as BOMImportRow[]
+    result.totalRows = typedData.length
 
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i]
+    for (let i = 0; i < typedData.length; i++) {
+      const row = typedData[i]
       const rowNum = i + 2
 
       // 필수 필드 검사
-      if (!row.productCode || !row.itemType || !row.itemCode || !row.quantity) {
+      if (!row.productCode || !row.itemCode || !row.quantity) {
         result.errors.push({
           row: rowNum,
-          message: '제품코드, 아이템유형, 아이템코드, 수량은 필수입니다.',
+          message: '완제품 품번, 자재코드, 소요량은 필수입니다.',
         })
         result.skippedRows++
         continue
       }
 
-      try {
-        // 제품 조회
-        const product = await prisma.product.findUnique({
-          where: { code: String(row.productCode) },
-        })
+      // 브라우저 환경에서는 Prisma 사용 불가
+      // 파싱된 데이터를 결과에 추가
+      result.data?.push({
+        productCode: String(row.productCode),
+        itemType: row.itemType || 'MATERIAL',
+        itemCode: String(row.itemCode),
+        quantity: Number(row.quantity),
+        unit: row.unit ? String(row.unit) : null,
+        processCode: row.processCode ? String(row.processCode) : null,
+      })
 
-        if (!product) {
-          result.errors.push({
-            row: rowNum,
-            message: `제품을 찾을 수 없습니다: ${row.productCode}`,
-          })
-          result.skippedRows++
-          continue
-        }
-
-        const bomData: {
-          productId: number
-          itemType: 'MATERIAL' | 'PRODUCT'
-          quantity: number
-          unit?: string
-          processCode?: string
-          materialId?: number
-          childProductId?: number
-        } = {
-          productId: product.id,
-          itemType: row.itemType,
-          quantity: Number(row.quantity),
-          unit: row.unit ? String(row.unit) : undefined,
-          processCode: row.processCode ? String(row.processCode) : undefined,
-        }
-
-        // 아이템 조회
-        if (row.itemType === 'MATERIAL') {
-          const material = await prisma.material.findUnique({
-            where: { code: String(row.itemCode) },
-          })
-
-          if (!material) {
-            result.errors.push({
-              row: rowNum,
-              message: `자재를 찾을 수 없습니다: ${row.itemCode}`,
-            })
-            result.skippedRows++
-            continue
-          }
-
-          bomData.materialId = material.id
-        } else {
-          const childProduct = await prisma.product.findUnique({
-            where: { code: String(row.itemCode) },
-          })
-
-          if (!childProduct) {
-            result.errors.push({
-              row: rowNum,
-              message: `반제품을 찾을 수 없습니다: ${row.itemCode}`,
-            })
-            result.skippedRows++
-            continue
-          }
-
-          bomData.childProductId = childProduct.id
-        }
-
-        // BOM 등록 (중복 시 업데이트)
-        const existingBOM = await prisma.bOM.findFirst({
-          where: {
-            productId: product.id,
-            materialId: bomData.materialId,
-            childProductId: bomData.childProductId,
-          },
-        })
-
-        if (existingBOM) {
-          if (options.skipDuplicates) {
-            result.skippedRows++
-            continue
-          }
-
-          await prisma.bOM.update({
-            where: { id: existingBOM.id },
-            data: bomData,
-          })
-        } else {
-          await prisma.bOM.create({
-            data: bomData,
-          })
-        }
-
-        result.importedRows++
-      } catch (error) {
-        result.errors.push({
-          row: rowNum,
-          message: error instanceof Error ? error.message : '등록 실패',
-          value: row,
-        })
-        result.skippedRows++
-      }
+      result.importedRows++
     }
 
     result.success = result.errors.length === 0
@@ -548,7 +411,7 @@ export interface StockImportRow {
 }
 
 /**
- * 재고 일괄 등록
+ * 재고 일괄 등록 (브라우저 호환)
  */
 export async function importStock(
   file: File,
@@ -560,23 +423,28 @@ export async function importStock(
     importedRows: 0,
     skippedRows: 0,
     errors: [],
+    data: [],
   }
 
   try {
     const workbook = await parseExcelFile(file)
-    let data = sheetToJson<StockImportRow>(workbook, options)
+    let data = sheetToJson<Record<string, unknown>>(workbook, options)
+
+    // 한글 헤더 매핑 적용
+    data = applyKoreanHeaderMapping<StockImportRow>(data, 'stock') as unknown as Record<string, unknown>[]
 
     if (options.columnMapping) {
       data = applyColumnMapping<StockImportRow>(
-        data as unknown as Record<string, unknown>[],
+        data,
         options.columnMapping
-      )
+      ) as unknown as Record<string, unknown>[]
     }
 
-    result.totalRows = data.length
+    const typedData = data as unknown as StockImportRow[]
+    result.totalRows = typedData.length
 
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i]
+    for (let i = 0; i < typedData.length; i++) {
+      const row = typedData[i]
       const rowNum = i + 2
 
       // 필수 필드 검사
@@ -589,63 +457,16 @@ export async function importStock(
         continue
       }
 
-      try {
-        // 자재 조회
-        const material = await prisma.material.findUnique({
-          where: { code: String(row.materialCode) },
-        })
+      // 브라우저 환경에서는 Prisma 사용 불가
+      // 파싱된 데이터를 결과에 추가
+      result.data?.push({
+        materialCode: String(row.materialCode),
+        lotNumber: String(row.lotNumber),
+        quantity: Number(row.quantity),
+        location: row.location ? String(row.location) : null,
+      })
 
-        if (!material) {
-          result.errors.push({
-            row: rowNum,
-            message: `자재를 찾을 수 없습니다: ${row.materialCode}`,
-          })
-          result.skippedRows++
-          continue
-        }
-
-        // 기존 재고 확인
-        const existingStock = await prisma.materialStock.findFirst({
-          where: {
-            materialId: material.id,
-            lotNumber: String(row.lotNumber),
-          },
-        })
-
-        const stockData = {
-          quantity: Number(row.quantity),
-          location: row.location ? String(row.location) : null,
-        }
-
-        if (existingStock) {
-          if (options.skipDuplicates) {
-            result.skippedRows++
-            continue
-          }
-
-          await prisma.materialStock.update({
-            where: { id: existingStock.id },
-            data: stockData,
-          })
-        } else {
-          await prisma.materialStock.create({
-            data: {
-              materialId: material.id,
-              lotNumber: String(row.lotNumber),
-              ...stockData,
-            },
-          })
-        }
-
-        result.importedRows++
-      } catch (error) {
-        result.errors.push({
-          row: rowNum,
-          message: error instanceof Error ? error.message : '등록 실패',
-          value: row,
-        })
-        result.skippedRows++
-      }
+      result.importedRows++
     }
 
     result.success = result.errors.length === 0

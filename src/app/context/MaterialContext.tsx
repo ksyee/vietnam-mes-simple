@@ -18,6 +18,7 @@ export interface Material {
 interface MaterialContextType {
   materials: Material[];
   addMaterial: (material: Omit<Material, 'id' | 'stock' | 'regDate'>) => void;
+  addMaterials: (materials: Omit<Material, 'id' | 'stock' | 'regDate'>[]) => number; // 일괄 등록
   updateMaterial: (material: Material) => void;
   deleteMaterial: (id: number) => void;
   resetMaterials: () => number; // 초기화 함수 추가
@@ -42,6 +43,24 @@ export const MaterialProvider = ({ children }: PropsWithChildren) => {
     setMaterials([...materials, material]);
   };
 
+  // 일괄 등록 함수 (React state batching 문제 해결)
+  const addMaterials = (newMats: Omit<Material, 'id' | 'stock' | 'regDate'>[]): number => {
+    const today = new Date().toISOString().split('T')[0];
+
+    setMaterials(prev => {
+      const startId = Math.max(...prev.map(m => m.id), 0) + 1;
+      const materialsToAdd: Material[] = newMats.map((mat, index) => ({
+        ...mat,
+        id: startId + index,
+        stock: 0,
+        regDate: today,
+      }));
+      return [...prev, ...materialsToAdd];
+    });
+
+    return newMats.length;
+  };
+
   const updateMaterial = (updatedMat: Material) => {
     setMaterials(materials.map(m => m.id === updatedMat.id ? updatedMat : m));
   };
@@ -57,7 +76,7 @@ export const MaterialProvider = ({ children }: PropsWithChildren) => {
   };
 
   return (
-    <MaterialContext.Provider value={{ materials, addMaterial, updateMaterial, deleteMaterial, resetMaterials }}>
+    <MaterialContext.Provider value={{ materials, addMaterial, addMaterials, updateMaterial, deleteMaterial, resetMaterials }}>
       {children}
     </MaterialContext.Provider>
   );

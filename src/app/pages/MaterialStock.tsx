@@ -65,7 +65,7 @@ export const MaterialStock = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-slate-800">재고 현황 조회</h2>
+        <h2 className="text-2xl font-bold text-slate-800">자재 재고 현황</h2>
         <Button variant="outline" onClick={handleDownloadExcel}>
           <Download className="mr-2 h-4 w-4" />
           엑셀 다운로드

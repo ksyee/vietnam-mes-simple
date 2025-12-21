@@ -13,13 +13,17 @@ import { Settings } from './pages/Settings';
 import { MaterialProvider } from './context/MaterialContext';
 import { AuthProvider } from './context/AuthContext';
 import { ProductionProvider } from './context/ProductionContext';
+import { ProductProvider } from './context/ProductContext';
+import { BOMProvider } from './context/BOMContext';
 import { Toaster } from 'sonner';
 
 function App() {
   return (
     <AuthProvider>
       <MaterialProvider>
-        <ProductionProvider>
+        <ProductProvider>
+          <BOMProvider>
+            <ProductionProvider>
           <HashRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -54,7 +58,9 @@ function App() {
         </Routes>
           </HashRouter>
           <Toaster position="top-right" richColors />
-        </ProductionProvider>
+            </ProductionProvider>
+          </BOMProvider>
+        </ProductProvider>
       </MaterialProvider>
     </AuthProvider>
   );

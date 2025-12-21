@@ -135,7 +135,7 @@ export const Sidebar = ({ isCollapsed = false, toggleSidebar, isMobile = false, 
         {((!isCollapsed || isMobile) && expandedMenus.material) && (
           <div className="space-y-1 mt-1">
             <NavItem to="/material/receiving" label="자재 입고" indent {...navProps} />
-            <NavItem to="/material/stock" label="재고 현황" indent {...navProps} />
+            <NavItem to="/material/stock" label="자재 재고 현황" indent {...navProps} />
           </div>
         )}
 

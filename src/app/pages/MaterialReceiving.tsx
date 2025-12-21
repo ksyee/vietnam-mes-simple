@@ -244,7 +244,7 @@ export const MaterialReceiving = () => {
               <CardTitle>스캔 입력</CardTitle>
               <CardDescription>
                 본사 바코드를 스캔하여 입고 처리합니다. (형식:
-                자재코드-LOT번호-수량)
+                자재품번-LOT번호-수량)
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -292,7 +292,7 @@ export const MaterialReceiving = () => {
                   <thead className="bg-slate-50 text-slate-500 font-medium border-b">
                     <tr>
                       <th className="px-4 py-3">시간</th>
-                      <th className="px-4 py-3">자재코드</th>
+                      <th className="px-4 py-3">자재품번</th>
                       <th className="px-4 py-3">품명</th>
                       <th className="px-4 py-3">LOT번호</th>
                       <th className="px-4 py-3 text-right">수량</th>
