@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(cat:*)",
+      "Bash(pnpm install:*)",
+      "Bash(npm install:*)",
+      "Bash(docker --version:*)",
+      "Bash(sudo apt-get update:*)",
+      "Bash(sudo apt-get install:*)",
+      "Bash(powershell.exe -Command \"winget --version\")",
+      "Bash(powershell.exe:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(ip route:*)",
+      "Bash(cmd.exe /c \"start /D \"\"C:\\\\Project\\\\vietnam-mes-simple\"\" cmd /k npm run dev\")",
+      "Bash(explorer.exe \"C:\\\\Project\\\\vietnam-mes-simple\\\\start-app.bat\")"
+    ]
+  }
+}

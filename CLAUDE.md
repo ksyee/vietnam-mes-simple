@@ -611,12 +611,39 @@ import { MBOMTreeView, ProcessRoutingEditor } from '@/app/components/mbom'
 
 회사 전반 코딩 스탠더드는 `~/.claude/ENTERPRISE.md` 참조
 
+## Windows 환경 설정
+
+Windows에서 프로젝트를 실행하려면 `docs/WINDOWS_SETUP.md` 참조
+
+### 빠른 시작
+
+```bash
+# 1. PostgreSQL 설치 (winget)
+winget install PostgreSQL.PostgreSQL.17
+
+# 2. 데이터베이스 설정 (관리자 권한)
+.\setup_postgres.ps1
+
+# 3. 앱 실행
+.\start-app.bat
+```
+
+### 주요 설정 파일
+
+| 파일 | 용도 |
+|------|------|
+| `.env` | DB 연결 정보 (WSL용 IP 포함) |
+| `setup_postgres.ps1` | PostgreSQL 초기 설정 |
+| `add_wsl_access.ps1` | WSL 네트워크 허용 |
+| `start-app.bat` | 앱 실행 배치 파일 |
+
 ---
 
 ## 변경 이력
 
 | 날짜 | 내용 |
 |------|------|
+| 2025-12-21 | Windows 환경 설정 (PostgreSQL 17, WSL 연동, 설정 스크립트, 실행 가이드) |
 | 2025-12-21 | MBOM 시스템 구현 (7단계: DB 스키마, 공정 마스터, 반제품 품번, MBOM 서비스, 공정 라우팅, SET 번들, UI 컴포넌트) |
 | 2025-12-20 | 4단계 마무리 기능 구현 (Excel Import, 백업/복원, 다국어 ko/vi, Electron 프린터 IPC) |
 | 2025-12-20 | 3단계 라벨/PDF 기능 구현 (LabelService, DocumentService, 라벨 컴포넌트 3개) |
