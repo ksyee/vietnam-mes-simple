@@ -178,14 +178,14 @@ export function parseBarcodeV1(barcode: string): BarcodeV1 | null {
 // ============================================
 
 /**
- * V2 바코드 생성 (신규 포맷)
- * 형식: [Process][ProductCode]Q[Qty]-[ShortCode][YYMMDD]-[LOT]
- * 예: CAP001Q100-C241220-0001
+ * V2 바코드 생성 (신규 포맷 - Barcord 호환)
+ * 형식: [Process][ProductCode]Q[Qty]-[ShortCode][YYMMDD]-[LOT(3자리)]
+ * 예: CA12345678-001Q100-C251211-001
  *
  * @param processCode 공정 코드
  * @param productCode 품번
  * @param quantity 수량
- * @param sequence 일련번호
+ * @param sequence 일련번호 (1-999)
  * @param date 날짜 (기본값: 오늘)
  */
 export function generateBarcodeV2(
@@ -197,38 +197,46 @@ export function generateBarcodeV2(
 ): string {
   const shortCode = PROCESS_SHORT_CODES[processCode.toUpperCase()] || processCode[0]
   const dateStr = getDateString(date)
-  const seqStr = String(sequence).padStart(4, '0')
+  // Barcord 호환: 3자리 일련번호
+  const seqStr = String(sequence).padStart(3, '0')
 
   return `${processCode.toUpperCase()}${productCode}Q${quantity}-${shortCode}${dateStr}-${seqStr}`
 }
 
 /**
- * 번들 바코드 생성
- * 형식: [Process][ProductCode]Q[SetQty]-[ShortCode][YYMMDD]-B[LOT]
- * 예: CAP001Q4-C241220-B001
+ * 번들 바코드 생성 (Barcord 호환)
+ * 형식: CA[ProductCode]Q[SetCount]-[YYMMDD]-[LOT(4자리)]
+ * 예: CA00299318Q5-251212-0001
  *
- * @param processCode 공정 코드
- * @param productCode 품번
- * @param setQuantity 묶음 개수
- * @param sequence 일련번호
+ * Barcord bundle_service.py 참조:
+ * - 항상 CA 접두어 사용 (CA 공정 묶음이므로)
+ * - shortCode 없음, 날짜만 사용
+ * - 4자리 일련번호
+ *
+ * @param productCode 완제품 품번
+ * @param setQuantity 세트 수량 (포함된 CA 바코드 개수)
+ * @param sequence 일련번호 (1-9999)
  * @param date 날짜 (기본값: 오늘)
  */
 export function generateBundleBarcode(
-  processCode: string,
   productCode: string,
   setQuantity: number,
   sequence: number,
   date: Date = new Date()
 ): string {
-  const shortCode = PROCESS_SHORT_CODES[processCode.toUpperCase()] || processCode[0]
   const dateStr = getDateString(date)
-  const seqStr = String(sequence).padStart(3, '0')
+  // Barcord 호환: 4자리 일련번호, B 접두어 없음
+  const seqStr = String(sequence).padStart(4, '0')
 
-  return `${processCode.toUpperCase()}${productCode}Q${setQuantity}-${shortCode}${dateStr}-B${seqStr}`
+  // 형식: CA{완제품품번}Q{세트수량}-{날짜}-{일련번호}
+  return `CA${productCode}Q${setQuantity}-${dateStr}-${seqStr}`
 }
 
 /**
- * V2 바코드 파싱
+ * V2 바코드 파싱 (Barcord 호환)
+ *
+ * 일반 바코드: [Process][ProductCode]Q[Qty]-[ShortCode][YYMMDD]-[LOT(3자리)]
+ * 번들 바코드: CA[ProductCode]Q[SetCount]-[YYMMDD]-[LOT(4자리)]
  */
 export function parseBarcodeV2(barcode: string): BarcodeV2 | null {
   // 구분자 정규화
@@ -255,14 +263,36 @@ export function parseBarcodeV2(barcode: string): BarcodeV2 | null {
   const quantity = parseInt(quantityStr, 10)
   if (isNaN(quantity)) return null
 
-  // 날짜 부분 파싱: [ShortCode][YYMMDD]
-  if (datePart.length !== 7) return null
-  const shortCode = datePart[0]
-  const date = datePart.slice(1)
+  // 날짜 부분 파싱 - 번들과 일반 바코드 구분
+  // 번들: 6자리 날짜만 (YYMMDD)
+  // 일반: 7자리 (shortCode + YYMMDD)
+  let shortCode: string
+  let date: string
+  let isBundle: boolean
 
-  // 일련번호 부분 파싱 (번들 확인)
-  const isBundle = seqPart.startsWith('B')
-  const sequence = isBundle ? seqPart.slice(1) : seqPart
+  if (datePart.length === 6 && /^\d{6}$/.test(datePart)) {
+    // 번들 바코드: 날짜만 있음 (shortCode 없음)
+    shortCode = ''
+    date = datePart
+    isBundle = true
+  } else if (datePart.length === 7) {
+    // 일반 바코드: shortCode + 날짜
+    shortCode = datePart[0]
+    date = datePart.slice(1)
+    isBundle = false
+  } else {
+    return null
+  }
+
+  // 일련번호 파싱
+  // 레거시 B 접두어 호환성 유지
+  const hasBPrefix = seqPart.startsWith('B')
+  const sequence = hasBPrefix ? seqPart.slice(1) : seqPart
+
+  // B 접두어가 있으면 번들로 처리 (레거시 호환)
+  if (hasBPrefix) {
+    isBundle = true
+  }
 
   return {
     version: 2,
@@ -274,6 +304,15 @@ export function parseBarcodeV2(barcode: string): BarcodeV2 | null {
     sequence,
     isBundle,
   }
+}
+
+/**
+ * 번들 바코드 여부 확인
+ * Barcord 형식: CA{productCode}Q{setCount}-{dateStr}-{seq}
+ */
+export function isBundleBarcode(barcode: string): boolean {
+  const parsed = parseBarcodeV2(barcode)
+  return parsed?.isBundle ?? false
 }
 
 // ============================================
@@ -565,6 +604,7 @@ export function getProcessName(processCode: string): string {
     'PA': '제품조립',
     'CI': '회로검사',
     'VI': '육안검사',
+    'CQ': '압착검사',
   }
   return names[processCode.toUpperCase()] || processCode
 }
@@ -605,8 +645,8 @@ export function formatBarcodeInfo(barcode: string): string {
     : parsed.date
 
   if (parsed.version === 2) {
-    const bundleStr = parsed.isBundle ? ' (번들)' : ''
-    return `[${processName}] ${parsed.productCode} - ${parsed.quantity}개 | ${dateStr} #${parsed.sequence}${bundleStr}`
+    const bundleStr = parsed.isBundle ? ' (Bundle)' : ''
+    return `[${processName}] ${parsed.productCode} - ${parsed.quantity} | ${dateStr} #${parsed.sequence}${bundleStr}`
   }
 
   return `[${processName}] ${dateStr} #${parsed.sequence}`

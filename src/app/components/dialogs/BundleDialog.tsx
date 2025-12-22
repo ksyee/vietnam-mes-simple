@@ -1,12 +1,14 @@
 /**
  * Bundle Dialog
  *
- * CA 번들 생성/관리 다이얼로그
- * - 번들 생성
- * - 개별 LOT 선택/추가
+ * CA 번들 생성/관리 다이얼로그 (Barcord 프로젝트 스타일)
+ * - 절압착품번 선택
+ * - CA 바코드 선택 (체크박스)
+ * - 검색/필터, 전체 선택
+ * - 선택 정보 표시
  * - 묶음 바코드 미리보기
  */
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -42,6 +44,8 @@ import {
   ScanBarcode,
   Check,
   Printer,
+  RefreshCw,
+  Search,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -61,6 +65,8 @@ interface BundleDialogProps {
   onOpenChange: (open: boolean) => void
   bundle?: BundleLotWithItems | null
   onComplete?: (bundle: BundleLotWithItems) => void
+  /** 절압착품번 목록 (외부에서 전달) */
+  crimpProducts?: CrimpProduct[]
 }
 
 interface AvailableLot {
@@ -70,12 +76,23 @@ interface AvailableLot {
   completedQty: number
   completedAt: Date | null
   selected: boolean
+  crimpProductCode?: string
 }
 
 interface Product {
   id: number
   code: string
   name: string
+  parentProductCode?: string
+  parentProductName?: string
+}
+
+/** 절압착품번 (반제품) */
+export interface CrimpProduct {
+  code: string
+  name?: string
+  parentProductCode?: string
+  parentProductName?: string
 }
 
 export function BundleDialog({
@@ -83,11 +100,17 @@ export function BundleDialog({
   onOpenChange,
   bundle: initialBundle,
   onComplete,
+  crimpProducts: externalCrimpProducts,
 }: BundleDialogProps) {
   const [step, setStep] = useState<'create' | 'select' | 'preview'>('create')
   const [isLoading, setIsLoading] = useState(false)
 
-  // 번들 생성 폼
+  // 절압착품번 선택 (Barcord 스타일)
+  const [crimpProducts, setCrimpProducts] = useState<CrimpProduct[]>([])
+  const [selectedCrimpCode, setSelectedCrimpCode] = useState<string>('')
+  const [parentProduct, setParentProduct] = useState<{ code: string; name: string } | null>(null)
+
+  // 기존 호환용
   const [products, setProducts] = useState<Product[]>([])
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null)
   const [setQuantity, setSetQuantity] = useState(4)
@@ -99,22 +122,111 @@ export function BundleDialog({
   const [availableLots, setAvailableLots] = useState<AvailableLot[]>([])
   const [scanInput, setScanInput] = useState('')
 
+  // 검색/필터 (Barcord 스타일)
+  const [searchText, setSearchText] = useState('')
+  const [selectAll, setSelectAll] = useState(false)
+
   // 라벨 미리보기 URL
   const [labelPreviewUrl, setLabelPreviewUrl] = useState<string | null>(null)
 
-  // 제품 목록 로드
+  // 선택 정보 계산 (Barcord 스타일)
+  const selectionInfo = useMemo(() => {
+    const selectedLots = availableLots.filter((lot) => lot.selected)
+    return {
+      count: selectedLots.length,
+      totalQty: selectedLots.reduce((sum, lot) => sum + lot.completedQty, 0),
+    }
+  }, [availableLots])
+
+  // 검색 필터링된 LOT 목록
+  const filteredLots = useMemo(() => {
+    if (!searchText.trim()) return availableLots
+    const search = searchText.toLowerCase()
+    return availableLots.filter(
+      (lot) =>
+        lot.lotNumber.toLowerCase().includes(search) ||
+        (lot.crimpProductCode && lot.crimpProductCode.toLowerCase().includes(search))
+    )
+  }, [availableLots, searchText])
+
+  // 제품 목록 로드 및 절압착품번 추출
   const loadProducts = useCallback(async () => {
     try {
       const data = await getAllProducts()
+      const caProducts = data.filter((p) => p.processCode === 'CA')
+
       setProducts(
-        data
-          .filter((p) => p.processCode === 'CA')
-          .map((p) => ({ id: p.id, code: p.code, name: p.name }))
+        caProducts.map((p) => ({ id: p.id, code: p.code, name: p.name }))
       )
+
+      // 외부에서 전달된 절압착품번이 있으면 사용
+      if (externalCrimpProducts && externalCrimpProducts.length > 0) {
+        setCrimpProducts(externalCrimpProducts)
+      } else {
+        // 절압착품번 목록 추출 (반제품 품번)
+        // - 형식: 완제품번호-회로번호 (예: 00315452-001)
+        // - 또는 공정별 반제품 (예: CA00315452)
+        const crimpSet = new Map<string, CrimpProduct>()
+        caProducts.forEach((p) => {
+          // 완제품-회로 패턴 (예: 00315452-001)
+          const crimpMatch = p.code.match(/^(\d+)-(\d+)$/)
+          if (crimpMatch) {
+            const parentCode = crimpMatch[1]
+            const parent = data.find((pr) => pr.code === parentCode)
+            crimpSet.set(p.code, {
+              code: p.code,
+              name: p.name,
+              parentProductCode: parent?.code,
+              parentProductName: parent?.name,
+            })
+          } else if (p.code.startsWith('CA')) {
+            // CA 접두어 패턴
+            crimpSet.set(p.code, {
+              code: p.code,
+              name: p.name,
+            })
+          } else {
+            // 그 외는 모두 절압착품번으로
+            crimpSet.set(p.code, {
+              code: p.code,
+              name: p.name,
+            })
+          }
+        })
+        setCrimpProducts(Array.from(crimpSet.values()))
+      }
     } catch (error) {
       console.error('Failed to load products:', error)
     }
-  }, [])
+  }, [externalCrimpProducts])
+
+  // 절압착품번 선택 시 완제품 표시
+  const handleCrimpSelect = useCallback((crimpCode: string) => {
+    setSelectedCrimpCode(crimpCode)
+    const crimp = crimpProducts.find((c) => c.code === crimpCode)
+    if (crimp?.parentProductCode) {
+      setParentProduct({
+        code: crimp.parentProductCode,
+        name: crimp.parentProductName || '',
+      })
+    } else {
+      setParentProduct(null)
+    }
+    // 기존 호환: productId 설정
+    const product = products.find((p) => p.code === crimpCode)
+    setSelectedProductId(product?.id || null)
+  }, [crimpProducts, products])
+
+  // 전체 선택/해제 핸들러
+  const handleSelectAll = useCallback((checked: boolean) => {
+    setSelectAll(checked)
+    setAvailableLots((prev) =>
+      prev.map((lot) => ({
+        ...lot,
+        selected: filteredLots.some((f) => f.id === lot.id) ? checked : lot.selected,
+      }))
+    )
+  }, [filteredLots])
 
   // 선택 가능한 LOT 로드
   const loadAvailableLots = useCallback(async (productId: number) => {
@@ -131,6 +243,20 @@ export function BundleDialog({
     }
   }, [])
 
+  // 새로고침 버튼
+  const handleRefresh = useCallback(async () => {
+    if (selectedProductId) {
+      setIsLoading(true)
+      try {
+        await loadAvailableLots(selectedProductId)
+        setSelectAll(false)
+        toast.success('목록을 새로고침했습니다.')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+  }, [selectedProductId, loadAvailableLots])
+
   // 초기화
   useEffect(() => {
     if (open) {
@@ -143,39 +269,46 @@ export function BundleDialog({
         setCurrentBundle(null)
         setStep('create')
         setSelectedProductId(null)
+        setSelectedCrimpCode('')
+        setParentProduct(null)
         setSetQuantity(4)
         setAvailableLots([])
         setLabelPreviewUrl(null)
+        setSearchText('')
+        setSelectAll(false)
       }
     }
   }, [open, initialBundle, loadProducts, loadAvailableLots])
 
   // 번들 생성
   const handleCreateBundle = async () => {
-    if (!selectedProductId) {
-      toast.error('제품을 선택하세요.')
+    if (!selectedCrimpCode) {
+      toast.error('절압착품번을 선택하세요.')
       return
     }
 
     setIsLoading(true)
     try {
-      const product = products.find((p) => p.id === selectedProductId)
-      if (!product) throw new Error('제품 정보를 찾을 수 없습니다.')
+      // 선택된 절압착품번으로 제품 찾기
+      const product = products.find((p) => p.code === selectedCrimpCode)
+      if (!product) throw new Error('절압착품번 정보를 찾을 수 없습니다.')
 
       const bundle = await createBundle({
         processCode: 'CA',
-        productId: selectedProductId,
-        productCode: product.code,
+        productId: product.id,
+        productCode: selectedCrimpCode,
         setQuantity,
       })
 
       setCurrentBundle(bundle)
-      await loadAvailableLots(selectedProductId)
+      await loadAvailableLots(product.id)
       setStep('select')
-      toast.success(`번들 ${bundle.bundleNo} 생성 완료`)
+      setSearchText('')
+      setSelectAll(false)
+      toast.success(`묶음 ${bundle.bundleNo} 생성 완료`)
     } catch (error) {
       console.error('Create bundle error:', error)
-      toast.error('번들 생성 실패')
+      toast.error('묶음 바코드 생성 실패')
     } finally {
       setIsLoading(false)
     }
@@ -190,13 +323,13 @@ export function BundleDialog({
     )
   }
 
-  // 선택한 LOT 추가
+  // 선택한 CA 바코드 추가
   const handleAddSelectedLots = async () => {
     if (!currentBundle) return
 
     const selectedLots = availableLots.filter((lot) => lot.selected)
     if (selectedLots.length === 0) {
-      toast.error('LOT를 선택하세요.')
+      toast.error('CA 바코드를 선택하세요.')
       return
     }
 
@@ -228,10 +361,13 @@ export function BundleDialog({
         prev.filter((lot) => !selectedLots.some((s) => s.id === lot.id))
       )
 
-      toast.success(`${selectedLots.length}개 LOT 추가 완료`)
+      // 선택 상태 초기화
+      setSelectAll(false)
+
+      toast.success(`${selectedLots.length}개 CA 바코드 추가 완료`)
     } catch (error) {
       console.error('Add lots error:', error)
-      toast.error('LOT 추가 실패')
+      toast.error('CA 바코드 추가 실패')
     } finally {
       setIsLoading(false)
     }
@@ -393,47 +529,64 @@ export function BundleDialog({
           </DialogTitle>
         </DialogHeader>
 
-        {/* Step 1: 번들 생성 */}
+        {/* Step 1: 번들 생성 (Barcord 스타일) */}
         {step === 'create' && (
           <div className="space-y-6">
-            <div className="grid gap-4">
-              <div className="grid gap-2">
-                <Label>제품 선택</Label>
-                <Select
-                  value={selectedProductId?.toString() || ''}
-                  onValueChange={(v) => setSelectedProductId(parseInt(v))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="CA 공정 제품 선택" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {products.map((product) => (
-                      <SelectItem key={product.id} value={product.id.toString()}>
-                        {product.code} - {product.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* 1. 절압착품번 선택 */}
+            <div className="border rounded-lg p-4 bg-slate-50">
+              <h4 className="font-medium mb-3 text-slate-700">1. 절압착품번 선택</h4>
+              <div className="grid gap-4">
+                <div className="flex items-center gap-4">
+                  <Label className="w-24 text-sm">절압착품번:</Label>
+                  <Select
+                    value={selectedCrimpCode}
+                    onValueChange={handleCrimpSelect}
+                  >
+                    <SelectTrigger className="flex-1">
+                      <SelectValue placeholder="-- 선택 --" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {crimpProducts.map((crimp) => (
+                        <SelectItem key={crimp.code} value={crimp.code}>
+                          {crimp.code}{crimp.name ? ` - ${crimp.name}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              <div className="grid gap-2">
-                <Label>번들 수량 (묶음 개수)</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={setQuantity}
-                  onChange={(e) => setSetQuantity(parseInt(e.target.value) || 4)}
-                />
-                <p className="text-xs text-slate-500">
-                  하나의 번들에 포함될 개별 LOT 수량
-                </p>
+                <div className="flex items-center gap-4">
+                  <Label className="w-24 text-sm">완제품:</Label>
+                  <span className="font-bold text-blue-600">
+                    {parentProduct
+                      ? `${parentProduct.code} - ${parentProduct.name}`
+                      : selectedCrimpCode
+                        ? '(연결된 완제품 없음)'
+                        : '-'}
+                  </span>
+                </div>
               </div>
+            </div>
+
+            {/* 2. 번들 수량 */}
+            <div className="grid gap-2">
+              <Label>묶음 수량 (번들에 포함할 CA 개수)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={setQuantity}
+                onChange={(e) => setSetQuantity(parseInt(e.target.value) || 4)}
+                className="w-32"
+              />
+              <p className="text-xs text-slate-500">
+                하나의 번들에 포함될 개별 CA 바코드 수량
+              </p>
             </div>
           </div>
         )}
 
-        {/* Step 2: LOT 선택 */}
+        {/* Step 2: CA 바코드 선택 (Barcord 스타일) */}
         {step === 'select' && currentBundle && (
           <div className="space-y-6">
             {/* 번들 정보 */}
@@ -441,10 +594,10 @@ export function BundleDialog({
               <div className="grid grid-cols-4 gap-4 text-sm">
                 <div>
                   <span className="text-slate-500">번들 번호</span>
-                  <p className="font-mono font-bold">{currentBundle.bundleNo}</p>
+                  <p className="font-mono font-bold text-pink-600">{currentBundle.bundleNo}</p>
                 </div>
                 <div>
-                  <span className="text-slate-500">제품</span>
+                  <span className="text-slate-500">절압착품번</span>
                   <p className="font-bold">{currentBundle.productCode}</p>
                 </div>
                 <div>
@@ -481,13 +634,13 @@ export function BundleDialog({
             {/* 현재 번들 아이템 */}
             {currentBundle.items.length > 0 && (
               <div>
-                <h4 className="font-medium mb-2">번들에 포함된 LOT</h4>
+                <h4 className="font-medium mb-2">번들에 포함된 CA 바코드</h4>
                 <div className="border rounded-lg">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>순번</TableHead>
-                        <TableHead>LOT 번호</TableHead>
+                        <TableHead className="w-14">순번</TableHead>
+                        <TableHead>CA 바코드</TableHead>
                         <TableHead>공정</TableHead>
                         <TableHead className="text-right">수량</TableHead>
                         <TableHead className="w-[60px]"></TableHead>
@@ -524,38 +677,64 @@ export function BundleDialog({
               </div>
             )}
 
-            {/* 선택 가능한 LOT 목록 */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-medium">선택 가능한 LOT</h4>
-                <Button
-                  size="sm"
-                  onClick={handleAddSelectedLots}
-                  disabled={isLoading || !availableLots.some((l) => l.selected)}
-                >
-                  <Plus className="h-4 w-4 mr-1" /> 선택 추가
+            {/* 선택 가능한 CA 바코드 (Barcord 스타일) */}
+            <div className="border rounded-lg p-4">
+              <h4 className="font-medium mb-3">2. CA 바코드 선택 (묶음에 포함할 바코드 체크)</h4>
+
+              {/* 검색/필터 바 */}
+              <div className="flex items-center gap-4 mb-3">
+                <div className="relative flex-1 max-w-[200px]">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                  <Input
+                    placeholder="바코드 번호 검색..."
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+
+                <div className="flex-1" />
+
+                {/* 전체 선택 체크박스 */}
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="select-all"
+                    checked={selectAll}
+                    onCheckedChange={(checked) => handleSelectAll(checked as boolean)}
+                  />
+                  <Label htmlFor="select-all" className="text-sm cursor-pointer">
+                    전체 선택
+                  </Label>
+                </div>
+
+                {/* 새로고침 버튼 */}
+                <Button variant="outline" size="sm" onClick={handleRefresh}>
+                  <RefreshCw className="h-4 w-4 mr-1" />
+                  새로고침
                 </Button>
               </div>
+
+              {/* CA 바코드 테이블 */}
               <div className="border rounded-lg max-h-[300px] overflow-y-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[50px]">선택</TableHead>
-                      <TableHead>LOT 번호</TableHead>
-                      <TableHead>공정</TableHead>
-                      <TableHead className="text-right">수량</TableHead>
-                      <TableHead>완료일시</TableHead>
+                      <TableHead className="w-[50px]"></TableHead>
+                      <TableHead>CA 바코드</TableHead>
+                      <TableHead className="text-right w-24">수량</TableHead>
+                      <TableHead className="w-36">생산일시</TableHead>
+                      <TableHead className="w-32">절압착품번</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {availableLots.length === 0 ? (
+                    {filteredLots.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-8 text-slate-400">
-                          선택 가능한 LOT가 없습니다.
+                          선택 가능한 CA 바코드가 없습니다.
                         </TableCell>
                       </TableRow>
                     ) : (
-                      availableLots.map((lot) => (
+                      filteredLots.map((lot) => (
                         <TableRow
                           key={lot.id}
                           className={lot.selected ? 'bg-blue-50' : ''}
@@ -567,22 +746,39 @@ export function BundleDialog({
                             />
                           </TableCell>
                           <TableCell className="font-mono">{lot.lotNumber}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{lot.processCode}</Badge>
-                          </TableCell>
                           <TableCell className="text-right">
                             {lot.completedQty.toLocaleString()}
                           </TableCell>
                           <TableCell className="text-slate-500 text-sm">
                             {lot.completedAt
-                              ? format(new Date(lot.completedAt), 'MM-dd HH:mm')
+                              ? format(new Date(lot.completedAt), 'yyyy-MM-dd HH:mm')
                               : '-'}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {lot.crimpProductCode || currentBundle.productCode}
                           </TableCell>
                         </TableRow>
                       ))
                     )}
                   </TableBody>
                 </Table>
+              </div>
+
+              {/* 선택 정보 (Barcord 스타일) */}
+              <div className="flex items-center gap-6 mt-3">
+                <span className="font-bold">
+                  선택: <span className="text-blue-600">{selectionInfo.count}개</span>
+                </span>
+                <span className="font-bold">
+                  총 수량: <span className="text-green-600">{selectionInfo.totalQty.toLocaleString()}</span>
+                </span>
+                <div className="flex-1" />
+                <Button
+                  onClick={handleAddSelectedLots}
+                  disabled={isLoading || selectionInfo.count === 0}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> 선택 추가
+                </Button>
               </div>
             </div>
           </div>
@@ -622,9 +818,13 @@ export function BundleDialog({
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 취소
               </Button>
-              <Button onClick={handleCreateBundle} disabled={isLoading || !selectedProductId}>
+              <Button
+                onClick={handleCreateBundle}
+                disabled={isLoading || !selectedCrimpCode}
+                className="bg-pink-600 hover:bg-pink-700 text-white"
+              >
                 {isLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                번들 생성
+                묶음 바코드 생성
               </Button>
             </>
           )}

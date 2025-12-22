@@ -925,6 +925,10 @@ material: {
 
 | 날짜 | 내용 |
 |------|------|
+| 2025-12-23 | CA 묶음 바코드 구현 (BundleDialog: 절압착품번 선택, 검색/필터, 전체선택, 선택정보 표시 - Barcord bundle_dialog.py 스타일) |
+| 2025-12-23 | 바코드 형식 Barcord 일치 (V2: 3자리 시퀀스, Bundle: 4자리 시퀀스, B접두어 제거, isBundleBarcode 함수 추가) |
+| 2025-12-23 | 바코드/라벨 베트남어 적용 (DocumentPreviewDialog, LabelTemplate, labelService, barcodeService: PDF 전표, 라벨 템플릿, 공정명, 오류 메시지 베트남어 변환) |
+| 2025-12-23 | 전표 출력 구현 (DocumentPreviewDialog: A4 전표 PDF, QR+1D 바코드, 투입자재 테이블, 서명란 - Barcord document_generator.py 스타일) |
 | 2025-12-22 | 공정 모니터링 개선 (ProcessView.tsx: 완제품 선택 자동완성, CA 절압착 품번 선택, 선택 삭제 버튼, 승인 시 검증 로직) |
 | 2025-12-22 | 자재 재고 삭제 기능 (MaterialStock.tsx: 전체 삭제 버튼, stockService.mock.ts: deleteStockItems/deleteReceivingRecords/resetAllStockData 함수) |
 | 2025-12-22 | 품목마스터 양식 템플릿 변경 (17개 컬럼, 바코드 매칭 안내, 품목마스터.xlsx) |

@@ -55,6 +55,7 @@ export const InspectionView = () => {
   const [isProcessing, setIsProcessing] = useState(false)
   const [todayStats, setTodayStats] = useState<InspectionStats | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // 검사 유형 매핑
   const getInspectionType = (): InspectionType => {
@@ -99,17 +100,25 @@ export const InspectionView = () => {
     inputRef.current?.focus()
   }, [type, currentLot])
 
-  // 바코드 스캔 처리
-  const handleScan = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!barcode.trim()) return
+  // 컴포넌트 언마운트 시 타이머 정리
+  useEffect(() => {
+    return () => {
+      if (scanTimeoutRef.current) {
+        clearTimeout(scanTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  // 바코드 처리 로직
+  const processBarcode = async (barcodeValue: string) => {
+    if (!barcodeValue || isLoading) return
 
     setIsLoading(true)
 
     try {
       // 1. 바코드 파싱 - parsed.raw가 원본 바코드 (LOT 번호)
-      const parsed = parseBarcode(barcode.trim())
-      const lotNumber = parsed?.raw || barcode.trim()
+      const parsed = parseBarcode(barcodeValue)
+      const lotNumber = parsed?.raw || barcodeValue
 
       // 2. LOT 조회
       const lot = await getLotByNumber(lotNumber)
@@ -117,6 +126,7 @@ export const InspectionView = () => {
       if (!lot) {
         toast.error(`LOT를 찾을 수 없습니다: ${lotNumber}`)
         setBarcode('')
+        inputRef.current?.focus()
         setIsLoading(false)
         return
       }
@@ -130,13 +140,47 @@ export const InspectionView = () => {
         quantity: lot.completedQty,
       })
 
+      toast.success(`LOT ${lot.lotNumber} 스캔 완료`)
       setBarcode('')
     } catch (error) {
       console.error('Scan error:', error)
       toast.error('바코드 처리 중 오류가 발생했습니다.')
     } finally {
       setIsLoading(false)
+      inputRef.current?.focus()
     }
+  }
+
+  // 바코드 입력 핸들러 (자동 스캔 감지)
+  const handleBarcodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setBarcode(value)
+
+    // 기존 타이머 취소
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current)
+    }
+
+    // 입력이 있으면 자동 스캔 타이머 설정 (300ms 후 자동 처리)
+    if (value.trim()) {
+      scanTimeoutRef.current = setTimeout(() => {
+        if (!isLoading && value.trim()) {
+          processBarcode(value.trim())
+        }
+      }, 300)
+    }
+  }
+
+  // 폼 제출 핸들러 (Enter 키)
+  const handleScan = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!barcode.trim() || isLoading) return
+
+    // 타이머 취소하고 즉시 처리
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current)
+    }
+    processBarcode(barcode.trim())
   }
 
   // 합격 처리
@@ -254,8 +298,8 @@ export const InspectionView = () => {
                   <Input
                     ref={inputRef}
                     value={barcode}
-                    onChange={(e) => setBarcode(e.target.value)}
-                    placeholder="바코드 입력 (Enter)"
+                    onChange={handleBarcodeChange}
+                    placeholder="바코드 스캔 (자동 처리)"
                     className="h-16 text-center text-xl shadow-inner bg-slate-50"
                     autoComplete="off"
                     disabled={isLoading}

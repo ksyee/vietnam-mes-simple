@@ -203,7 +203,7 @@ export async function createBundleLot(
   setQuantity: number
 ): Promise<{ bundleNo: string; bundleLotId: number }> {
   const sequence = await getNextBundleSequence(processCode)
-  const bundleNo = generateBundleBarcode(processCode, productCode, setQuantity, sequence.sequence)
+  const bundleNo = generateBundleBarcode(productCode, setQuantity, sequence.sequence)
 
   const bundleLot = await prisma.bundleLot.create({
     data: {

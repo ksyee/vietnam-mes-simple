@@ -65,9 +65,9 @@ export interface AddToBundleInput {
 export async function createBundle(input: CreateBundleInput): Promise<BundleLotWithItems> {
   const { processCode, productId, productCode, setQuantity } = input
 
-  // 번들 일련번호 생성
+  // 번들 일련번호 생성 (Barcord 호환)
   const sequence = await getNextBundleSequence(processCode)
-  const bundleNo = generateBundleBarcode(processCode, productCode, setQuantity, sequence.sequence)
+  const bundleNo = generateBundleBarcode(productCode, setQuantity, sequence.sequence)
 
   const bundleLot = await prisma.bundleLot.create({
     data: {
@@ -843,11 +843,10 @@ export async function createSetBundle(
   const processCode = firstLot.processCode
   const productCode = firstLot.product.code
 
-  // SET 번들 번호 생성
+  // SET 번들 번호 생성 (Barcord 호환)
   const sequence = await getNextBundleSequence(processCode)
   const setQuantity = items.length
   const bundleNo = generateBundleBarcode(
-    processCode,
     bundleType === 'MULTI_PRODUCT' ? 'SET' : productCode,
     setQuantity,
     sequence.sequence
