@@ -22,6 +22,9 @@ let win: BrowserWindow | null
 // 🚧 Use ['ENV_NAME'] avoid vite:define plugin - Vite@2.x
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
+// 개발 모드 감지: dist/index.html이 없으면 개발 모드
+const isDev = !app.isPackaged
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
@@ -38,8 +41,11 @@ function createWindow() {
 
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL)
+  } else if (isDev) {
+    // 개발 모드에서 VITE_DEV_SERVER_URL이 없으면 기본 URL 사용
+    win.loadURL('http://localhost:5173')
   } else {
-    // win.loadFile('dist/index.html')
+    // 프로덕션 모드
     win.loadFile(path.join(process.env.DIST, 'index.html'))
   }
 }

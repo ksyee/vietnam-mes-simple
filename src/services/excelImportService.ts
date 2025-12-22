@@ -324,7 +324,8 @@ export interface BOMImportRow {
   itemCode: string           // materialCode 또는 childProductCode
   quantity: number
   unit?: string
-  processCode?: string
+  processCode?: string       // 공정 코드 (PA/MC/SB/MS/CA) - level 자동 산출용
+  crimpCode?: string         // 절압착 품번 (CA 자재용)
 }
 
 /**
@@ -376,13 +377,15 @@ export async function importBOM(
 
       // 브라우저 환경에서는 Prisma 사용 불가
       // 파싱된 데이터를 결과에 추가
+      // processCode와 crimpCode를 포함하여 BOMContext에서 level 자동 산출
       result.data?.push({
         productCode: String(row.productCode),
         itemType: row.itemType || 'MATERIAL',
         itemCode: String(row.itemCode),
         quantity: Number(row.quantity),
         unit: row.unit ? String(row.unit) : null,
-        processCode: row.processCode ? String(row.processCode) : null,
+        processCode: row.processCode ? String(row.processCode).toUpperCase() : null,
+        crimpCode: row.crimpCode ? String(row.crimpCode) : null,
       })
 
       result.importedRows++

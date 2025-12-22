@@ -16,7 +16,10 @@
       "Bash(cmd.exe /c \"start /D \"\"C:\\\\Project\\\\vietnam-mes-simple\"\" cmd /k npm run dev\")",
       "Bash(explorer.exe \"C:\\\\Project\\\\vietnam-mes-simple\\\\start-app.bat\")",
       "Bash(npx tsc:*)",
-      "mcp__sequential-thinking__sequentialthinking"
+      "mcp__sequential-thinking__sequentialthinking",
+      "Skill(sc:implement)",
+      "Bash(npx vitest:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

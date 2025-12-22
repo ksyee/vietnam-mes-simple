@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, PropsWithChildren } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, PropsWithChildren } from 'react';
 
 // 자재 데이터 타입 정의 (MasterData와 MaterialStock의 필드 통합)
 export interface Material {
@@ -26,11 +26,39 @@ interface MaterialContextType {
 
 const MaterialContext = createContext<MaterialContextType | undefined>(undefined);
 
-// 초기 데이터 없음 (공장초기화 상태)
-const INITIAL_MATERIALS: Material[] = [];
+// localStorage 키
+const STORAGE_KEY = 'vietnam_mes_materials';
+
+// localStorage에서 데이터 로드
+function loadFromStorage(): Material[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error('MaterialContext: localStorage 로드 실패', e);
+  }
+  return [];
+}
+
+// localStorage에 데이터 저장
+function saveToStorage(materials: Material[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(materials));
+  } catch (e) {
+    console.error('MaterialContext: localStorage 저장 실패', e);
+  }
+}
 
 export const MaterialProvider = ({ children }: PropsWithChildren) => {
-  const [materials, setMaterials] = useState<Material[]>(INITIAL_MATERIALS);
+  // 초기 로드 시 localStorage에서 데이터 복원
+  const [materials, setMaterials] = useState<Material[]>(() => loadFromStorage());
+
+  // materials 변경 시 localStorage에 저장
+  useEffect(() => {
+    saveToStorage(materials);
+  }, [materials]);
 
   const addMaterial = (newMat: Omit<Material, 'id' | 'stock' | 'regDate'>) => {
     const id = Math.max(...materials.map(m => m.id), 0) + 1;

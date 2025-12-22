@@ -13,10 +13,11 @@
 | 데스크톱 | Electron |
 | 스타일링 | Tailwind CSS v4 |
 | UI 컴포넌트 | Radix UI + MUI |
-| 상태관리 | React Context API |
+| 상태관리 | React Context API + localStorage |
 | 라우팅 | React Router (HashRouter) |
 | 차트 | Recharts |
 | 데이터베이스 | PostgreSQL 16 + Prisma 6 |
+| 데이터 영속화 | localStorage (브라우저/Electron 공통) |
 
 ## 디렉토리 구조
 
@@ -624,9 +625,17 @@ winget install PostgreSQL.PostgreSQL.17
 # 2. 데이터베이스 설정 (관리자 권한)
 .\setup_postgres.ps1
 
-# 3. 앱 실행
-.\start-app.bat
+# 3. 앱 실행 (아래 중 택1)
+.\run.bat              # Electron 모드 (데스크톱 앱)
+.\run-browser.bat      # 브라우저 전용 모드
 ```
+
+### 실행 모드
+
+| 모드 | 실행 방법 | 설명 |
+|------|----------|------|
+| Electron | `run.bat` 또는 `npm run dev` | 데스크톱 앱으로 실행 |
+| 브라우저 | `run-browser.bat` 또는 `npm run web` | 웹 브라우저에서 실행 |
 
 ### 주요 설정 파일
 
@@ -635,53 +644,57 @@ winget install PostgreSQL.PostgreSQL.17
 | `.env` | DB 연결 정보 (WSL용 IP 포함) |
 | `setup_postgres.ps1` | PostgreSQL 초기 설정 |
 | `add_wsl_access.ps1` | WSL 네트워크 허용 |
-| `start-app.bat` | 앱 실행 배치 파일 |
+| `run.bat` | Electron 앱 실행 |
+| `run-browser.bat` | 브라우저 전용 모드 실행 |
+
+### 데이터 저장
+
+기초 자료(제품, 자재, BOM)는 **localStorage**에 자동 저장됩니다:
+
+| 데이터 | localStorage 키 |
+|--------|----------------|
+| 자재 마스터 | `vietnam_mes_materials` |
+| 완제품 마스터 | `vietnam_mes_products` |
+| BOM 마스터 | `vietnam_mes_bom` |
+
+- 앱 재시작/브라우저 새로고침 시에도 데이터 유지
+- 브라우저 데이터 삭제 시 초기화됨
 
 ---
 
-## TODO: BOM Level 구현 계획
+## TODO: BOM Level 구현
 
+> **상세 계획서**: `docs/BOM_LEVEL_구현계획.md`
 > **트리거**: "내일 뭘해야 하지?" 질문 시 이 섹션 안내
 
-### 현재 상태
-- BOM 데이터 Excel Import 완료
-- BOM 트리 UI (품번별 그룹핑, 펼침/접기) 구현 완료
-- **미구현**: BOM Level (LV) 자동 산출
+### BOM Level 구조 (확정)
 
-### 문제점
-- 업로드 파일에 LV 항목이 없어 모든 자재가 LV=1로 표시됨
-- 절압착품번(crimpCode)으로 자재 구분 가능하나 트리에 반영되지 않음
+| Level | 공정코드 | 공정명 | 품번 형식 |
+|-------|----------|--------|-----------|
+| LV0 | - | 완제품 | `00315452` |
+| LV1 | PA | 제품조립 | PA 투입 자재 |
+| LV2 | MC | 수동압착 | `MC00315452` |
+| LV3 | SB, MS | 서브조립, 중간탈피 | `SB00315452`, `MS00315452-001` |
+| LV4 | CA | 자동절단압착 | `00315452-001` (절압품번) |
 
-### 제안된 구현 방안
+### 핵심 원칙
+> **"품번이 붙어서 이동하는 공정만 BOM Level에 포함"**
 
-**2-Level 트리 구조** (절압착품번 기반 그룹핑):
-
-```
-L0: 완제품 (productCode: 00315452)
-├─ L1: 절압착품번 그룹 (crimpCode: 00315452-001)
-│  └─ L2: 절압 자재들 (CA 공정 자재)
-├─ L1: 절압착품번 그룹 (crimpCode: 00315452-002)
-│  └─ L2: 절압 자재들 (CA 공정 자재)
-└─ L1: 직접 자재 (crimpCode 없음)
-   └─ MC/SB/SP 공정 자재들
-```
-
-### 구분 기준
-| 절압착품번 | 공정 | 설명 |
-|-----------|------|------|
-| 있음 | CA | 자동절단압착 자재 |
-| 없음 | MC/SB/SP | 수동압착/서브조립/스플라이스 자재 |
+### 제외 공정
+- SP: 자재 수집 행위, 변환 없음
+- HS: 형태 처리, 품번 미생성
+- CQ, CI, VI: 검사 공정
 
 ### 구현 단계
-1. BOMItem 인터페이스에 `crimpCode` 필드 추가
-2. Excel Import 시 crimpCode 매핑
-3. BOMContext에서 crimpCode 기반 3-Level 그룹핑 구현
-4. MasterData.tsx BOM 트리 UI 수정 (3-Level 표시)
+1. BOMContext.tsx 타입 및 그룹핑 로직 수정
+2. MasterData.tsx Import 매핑 수정 (processCode → level 자동 산출)
+3. MasterData.tsx 트리 UI 구현 (품번 → Level → crimpCode 3단계)
+4. 테스트 (Excel Import → 트리 표시)
 
 ### 관련 파일
-- `src/app/context/BOMContext.tsx` - BOMItem 타입 수정, bomGroups 로직 변경
-- `src/app/pages/MasterData.tsx` - BOM 트리 UI (type='bom' 섹션)
-- `src/services/excelImportService.ts` - Excel Import 매핑
+- `src/app/context/BOMContext.tsx` - BOMItem 타입, determineLevel(), 그룹핑 로직
+- `src/app/pages/MasterData.tsx` - Import 매핑, 트리 UI
+- `docs/BOM_LEVEL_구현계획.md` - 상세 구현 계획서
 
 ---
 
@@ -689,6 +702,9 @@ L0: 완제품 (productCode: 00315452)
 
 | 날짜 | 내용 |
 |------|------|
+| 2025-12-22 | Context localStorage 영속화 (MaterialContext, ProductContext, BOMContext - 앱 재시작 시 데이터 유지) |
+| 2025-12-22 | Electron 실행 환경 개선 (빈 화면 수정, DevTools 제거, 브라우저 전용 모드 추가) |
+| 2025-12-22 | 간편 실행 배치 파일 생성 (run.bat: Electron 모드, run-browser.bat: 브라우저 전용 모드) |
 | 2025-12-21 | Excel Import → Context 연동 (ProductContext, BOMContext 생성, 일괄등록 함수 addProducts/addMaterials/addBOMItems) |
 | 2025-12-21 | BOM 트리 UI 구현 (품번별 그룹핑, 펼침/접기 토글, 자재 목록 테이블) |
 | 2025-12-21 | React state batching 버그 수정 (forEach+setState → 일괄 setState) |

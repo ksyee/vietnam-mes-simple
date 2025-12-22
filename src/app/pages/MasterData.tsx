@@ -38,8 +38,10 @@ export const MasterData = () => {
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
 
-  // BOM state - 펼쳐진 품번 목록
-  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
+  // BOM state - 3-Level 펼침/접기 상태
+  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());  // LV0: 품번
+  const [expandedLevels, setExpandedLevels] = useState<Map<string, Set<number>>>(new Map());  // LV1-4: 품번별 레벨
+  const [expandedCrimps, setExpandedCrimps] = useState<Map<string, Set<string>>>(new Map());  // CA crimpCode
 
   const getTitle = () => {
     switch (type) {
@@ -144,9 +146,21 @@ export const MasterData = () => {
         const addedCount = addMaterials(materialData);
         toast.success(`${addedCount}건이 등록되었습니다.`);
       } else if (type === 'bom') {
-        // BOM 일괄 등록 (Excel 필드명: productCode, itemCode, quantity, unit, processCode)
+        // BOM 일괄 등록 (Excel 필드명: productCode, itemCode, quantity, unit, processCode, crimpCode)
+        // level은 processCode에서 자동 산출됨 (BOMContext.addBOMItems → determineLevel)
         const bomData = result.data.map((item: unknown) => {
-          const bom = item as { productCode: string; itemCode: string; itemType?: string; quantity: number; unit?: string; processCode?: string };
+          const bom = item as {
+            productCode: string;
+            itemCode: string;
+            quantity?: number;
+            unit?: string;
+            processCode?: string;  // 공정 코드 (PA/MC/SB/MS/CA)
+            crimpCode?: string;    // 절압착 품번 (CA 자재용)
+          };
+
+          // 공정 코드 정규화 (대문자 변환)
+          const processCode = (bom.processCode || '').toUpperCase();
+
           return {
             productCode: bom.productCode,
             productName: undefined, // Excel에서 품명은 가져오지 않음
@@ -154,8 +168,9 @@ export const MasterData = () => {
             materialName: bom.itemCode, // 자재명은 품번으로 대체 (실제 서비스에서 조회 필요)
             quantity: bom.quantity || 1,
             unit: bom.unit || 'EA',
-            level: 1, // 기본 레벨
-            description: bom.processCode ? `공정: ${bom.processCode}` : undefined
+            processCode: processCode,  // 공정 코드 (level 자동 산출용)
+            crimpCode: processCode === 'CA' ? bom.crimpCode : undefined,  // CA 자재만 crimpCode 적용
+            // level은 addBOMItems에서 determineLevel(processCode)로 자동 산출
           };
         });
         const addedCount = addBOMItems(bomData);
@@ -170,7 +185,11 @@ export const MasterData = () => {
     }
   };
 
-  // BOM 펼치기/접기 토글
+  // ============================================================
+  // BOM 3-Level 펼치기/접기 토글 함수
+  // ============================================================
+
+  // LV0: 품번 토글
   const toggleProductExpand = (productCode: string) => {
     setExpandedProducts(prev => {
       const newSet = new Set(prev);
@@ -183,13 +202,87 @@ export const MasterData = () => {
     });
   };
 
-  // 전체 펼치기/접기
-  const expandAll = () => {
-    setExpandedProducts(new Set(bomGroups.map(g => g.productCode)));
+  // LV1-4: 레벨 토글 (품번별)
+  const toggleLevelExpand = (productCode: string, level: number) => {
+    setExpandedLevels(prev => {
+      const newMap = new Map(prev);
+      const levels = newMap.get(productCode) || new Set<number>();
+      const newLevels = new Set(levels);
+      if (newLevels.has(level)) {
+        newLevels.delete(level);
+      } else {
+        newLevels.add(level);
+      }
+      newMap.set(productCode, newLevels);
+      return newMap;
+    });
   };
 
+  // CA crimpCode 토글 (품번별)
+  const toggleCrimpExpand = (productCode: string, crimpCode: string) => {
+    setExpandedCrimps(prev => {
+      const newMap = new Map(prev);
+      const crimps = newMap.get(productCode) || new Set<string>();
+      const newCrimps = new Set(crimps);
+      if (newCrimps.has(crimpCode)) {
+        newCrimps.delete(crimpCode);
+      } else {
+        newCrimps.add(crimpCode);
+      }
+      newMap.set(productCode, newCrimps);
+      return newMap;
+    });
+  };
+
+  // 레벨 펼침 상태 확인
+  const isLevelExpanded = (productCode: string, level: number): boolean => {
+    return expandedLevels.get(productCode)?.has(level) || false;
+  };
+
+  // crimpCode 펼침 상태 확인
+  const isCrimpExpanded = (productCode: string, crimpCode: string): boolean => {
+    return expandedCrimps.get(productCode)?.has(crimpCode) || false;
+  };
+
+  // 전체 펼치기 (모든 레벨)
+  const expandAll = () => {
+    // 모든 품번 펼치기
+    setExpandedProducts(new Set(bomGroups.map(g => g.productCode)));
+
+    // 모든 레벨 펼치기
+    const newLevels = new Map<string, Set<number>>();
+    bomGroups.forEach(group => {
+      newLevels.set(group.productCode, new Set(group.levelGroups.map(lg => lg.level)));
+    });
+    setExpandedLevels(newLevels);
+
+    // 모든 crimpCode 펼치기
+    const newCrimps = new Map<string, Set<string>>();
+    bomGroups.forEach(group => {
+      const level4 = group.levelGroups.find(lg => lg.level === 4);
+      if (level4?.crimpGroups) {
+        newCrimps.set(group.productCode, new Set(level4.crimpGroups.map(cg => cg.crimpCode)));
+      }
+    });
+    setExpandedCrimps(newCrimps);
+  };
+
+  // 전체 접기
   const collapseAll = () => {
     setExpandedProducts(new Set());
+    setExpandedLevels(new Map());
+    setExpandedCrimps(new Map());
+  };
+
+  // 레벨별 배지 색상
+  const getLevelBadgeColor = (level: number): string => {
+    switch (level) {
+      case 1: return 'bg-blue-100 text-blue-700 border-blue-200';
+      case 2: return 'bg-green-100 text-green-700 border-green-200';
+      case 3: return 'bg-amber-100 text-amber-700 border-amber-200';
+      case 4: return 'bg-purple-100 text-purple-700 border-purple-200';
+      default: return 'bg-slate-100 text-slate-700 border-slate-200';
+    }
   };
 
   // Product handlers
@@ -417,30 +510,35 @@ export const MasterData = () => {
             ) : (
               <div className="divide-y divide-slate-100">
                 {bomGroups.map((group) => {
-                  const isExpanded = expandedProducts.has(group.productCode);
+                  const isProductExpanded = expandedProducts.has(group.productCode);
                   return (
                     <div key={group.productCode} className="bg-white">
-                      {/* 품번 헤더 (클릭하여 펼치기/접기) */}
+                      {/* ========================================== */}
+                      {/* LV0: 품번 헤더 (클릭하여 펼치기/접기) */}
+                      {/* ========================================== */}
                       <button
                         onClick={() => toggleProductExpand(group.productCode)}
                         className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors text-left"
                       >
                         <div className="flex items-center gap-3">
-                          {isExpanded ? (
+                          {isProductExpanded ? (
                             <ChevronDown className="h-5 w-5 text-slate-400" />
                           ) : (
                             <ChevronRight className="h-5 w-5 text-slate-400" />
                           )}
-                          <div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="bg-slate-100 text-slate-700 border-slate-200 font-mono text-xs">
+                              LV0
+                            </Badge>
                             <span className="font-mono font-semibold text-blue-600">{group.productCode}</span>
                             {group.productName && (
-                              <span className="ml-2 text-slate-600">{group.productName}</span>
+                              <span className="text-slate-600">{group.productName}</span>
                             )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <Badge variant="secondary" className="font-normal">
-                            {group.items.length}개 자재
+                            {group.levelGroups.length}개 공정 / {group.totalItems}개 자재
                           </Badge>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
@@ -464,55 +562,170 @@ export const MasterData = () => {
                         </div>
                       </button>
 
-                      {/* 하위 자재 목록 (펼쳐졌을 때만 표시) */}
-                      {isExpanded && (
+                      {/* ========================================== */}
+                      {/* LV1-4: 레벨별 그룹 (품번 펼쳐졌을 때만 표시) */}
+                      {/* ========================================== */}
+                      {isProductExpanded && (
                         <div className="bg-slate-50 border-t border-slate-100">
-                          <Table>
-                            <TableHeader>
-                              <TableRow className="bg-slate-100/50">
-                                <TableHead className="w-[50px] pl-12">Lv</TableHead>
-                                <TableHead className="w-[120px]">자재 품번</TableHead>
-                                <TableHead>자재명</TableHead>
-                                <TableHead className="text-right w-[100px]">소요량</TableHead>
-                                <TableHead className="w-[80px]">단위</TableHead>
-                                <TableHead>비고</TableHead>
-                                <TableHead className="w-[60px]"></TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {group.items.map((item) => (
-                                <TableRow key={item.id} className="hover:bg-slate-100/50">
-                                  <TableCell className="pl-12">
-                                    <Badge variant="outline" className="font-mono text-xs">
-                                      L{item.level || 1}
+                          {group.levelGroups.map((levelGroup) => {
+                            const isLevelOpen = isLevelExpanded(group.productCode, levelGroup.level);
+                            const hascrimpGroups = levelGroup.level === 4 && levelGroup.crimpGroups && levelGroup.crimpGroups.length > 0;
+
+                            return (
+                              <div key={`${group.productCode}-L${levelGroup.level}`} className="border-b border-slate-100 last:border-b-0">
+                                {/* 레벨 헤더 */}
+                                <button
+                                  onClick={() => toggleLevelExpand(group.productCode, levelGroup.level)}
+                                  className="w-full flex items-center justify-between pl-8 pr-4 py-2.5 hover:bg-slate-100/70 transition-colors text-left"
+                                >
+                                  <div className="flex items-center gap-3">
+                                    {isLevelOpen ? (
+                                      <ChevronDown className="h-4 w-4 text-slate-400" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 text-slate-400" />
+                                    )}
+                                    <Badge variant="outline" className={`font-mono text-xs ${getLevelBadgeColor(levelGroup.level)}`}>
+                                      LV{levelGroup.level}
                                     </Badge>
-                                  </TableCell>
-                                  <TableCell className="font-mono text-sm">{item.materialCode}</TableCell>
-                                  <TableCell>{item.materialName}</TableCell>
-                                  <TableCell className="text-right font-medium text-blue-600">
-                                    {item.quantity.toLocaleString()}
-                                  </TableCell>
-                                  <TableCell>
-                                    <Badge variant="outline" className="font-normal">{item.unit}</Badge>
-                                  </TableCell>
-                                  <TableCell className="text-slate-500 text-sm">{item.description || '-'}</TableCell>
-                                  <TableCell>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
-                                      onClick={() => {
-                                        deleteBOMItem(item.id);
-                                        toast.success('자재가 삭제되었습니다.');
-                                      }}
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
+                                    <span className="font-medium text-slate-700">
+                                      {levelGroup.processCode} {levelGroup.processName}
+                                    </span>
+                                  </div>
+                                  <Badge variant="secondary" className="font-normal text-xs">
+                                    {levelGroup.items.length}개 자재
+                                    {hascrimpGroups && ` / ${levelGroup.crimpGroups!.length}개 절압품번`}
+                                  </Badge>
+                                </button>
+
+                                {/* 레벨 내용 (펼쳐졌을 때만 표시) */}
+                                {isLevelOpen && (
+                                  <div className="bg-white">
+                                    {/* LV4 CA: crimpCode별 하위 그룹 */}
+                                    {hascrimpGroups ? (
+                                      <div className="divide-y divide-slate-50">
+                                        {levelGroup.crimpGroups!.map((crimpGroup) => {
+                                          const isCrimpOpen = isCrimpExpanded(group.productCode, crimpGroup.crimpCode);
+
+                                          return (
+                                            <div key={`${group.productCode}-${crimpGroup.crimpCode}`}>
+                                              {/* crimpCode 헤더 */}
+                                              <button
+                                                onClick={() => toggleCrimpExpand(group.productCode, crimpGroup.crimpCode)}
+                                                className="w-full flex items-center justify-between pl-16 pr-4 py-2 hover:bg-slate-50 transition-colors text-left"
+                                              >
+                                                <div className="flex items-center gap-3">
+                                                  {isCrimpOpen ? (
+                                                    <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                                                  ) : (
+                                                    <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+                                                  )}
+                                                  <Package className="h-4 w-4 text-purple-500" />
+                                                  <span className="font-mono text-sm text-purple-700">{crimpGroup.crimpCode}</span>
+                                                </div>
+                                                <Badge variant="outline" className="font-normal text-xs">
+                                                  {crimpGroup.items.length}개
+                                                </Badge>
+                                              </button>
+
+                                              {/* crimpCode 자재 테이블 */}
+                                              {isCrimpOpen && (
+                                                <div className="pl-20 pr-4 pb-2">
+                                                  <Table>
+                                                    <TableHeader>
+                                                      <TableRow className="bg-purple-50/50">
+                                                        <TableHead className="w-[140px] text-xs">자재 품번</TableHead>
+                                                        <TableHead className="text-xs">자재명</TableHead>
+                                                        <TableHead className="text-right w-[80px] text-xs">소요량</TableHead>
+                                                        <TableHead className="w-[60px] text-xs">단위</TableHead>
+                                                        <TableHead className="w-[40px]"></TableHead>
+                                                      </TableRow>
+                                                    </TableHeader>
+                                                    <TableBody>
+                                                      {crimpGroup.items.map((item) => (
+                                                        <TableRow key={item.id} className="hover:bg-purple-50/30">
+                                                          <TableCell className="font-mono text-xs py-1.5">{item.materialCode}</TableCell>
+                                                          <TableCell className="text-xs py-1.5">{item.materialName}</TableCell>
+                                                          <TableCell className="text-right font-medium text-purple-600 text-xs py-1.5">
+                                                            {item.quantity.toLocaleString()}
+                                                          </TableCell>
+                                                          <TableCell className="py-1.5">
+                                                            <Badge variant="outline" className="font-normal text-xs">{item.unit}</Badge>
+                                                          </TableCell>
+                                                          <TableCell className="py-1.5">
+                                                            <Button
+                                                              variant="ghost"
+                                                              size="sm"
+                                                              className="h-6 w-6 p-0 text-red-400 hover:text-red-600 hover:bg-red-50"
+                                                              onClick={() => {
+                                                                deleteBOMItem(item.id);
+                                                                toast.success('자재가 삭제되었습니다.');
+                                                              }}
+                                                            >
+                                                              <Trash2 className="h-3 w-3" />
+                                                            </Button>
+                                                          </TableCell>
+                                                        </TableRow>
+                                                      ))}
+                                                    </TableBody>
+                                                  </Table>
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      /* LV1-3: 일반 자재 테이블 */
+                                      <div className="pl-12 pr-4 py-2">
+                                        <Table>
+                                          <TableHeader>
+                                            <TableRow className={`${levelGroup.level === 1 ? 'bg-blue-50/50' : levelGroup.level === 2 ? 'bg-green-50/50' : 'bg-amber-50/50'}`}>
+                                              <TableHead className="w-[140px] text-xs">자재 품번</TableHead>
+                                              <TableHead className="text-xs">자재명</TableHead>
+                                              <TableHead className="text-right w-[80px] text-xs">소요량</TableHead>
+                                              <TableHead className="w-[60px] text-xs">단위</TableHead>
+                                              <TableHead className="text-xs">비고</TableHead>
+                                              <TableHead className="w-[40px]"></TableHead>
+                                            </TableRow>
+                                          </TableHeader>
+                                          <TableBody>
+                                            {levelGroup.items.map((item) => (
+                                              <TableRow key={item.id} className="hover:bg-slate-50/50">
+                                                <TableCell className="font-mono text-xs py-1.5">{item.materialCode}</TableCell>
+                                                <TableCell className="text-xs py-1.5">{item.materialName}</TableCell>
+                                                <TableCell className={`text-right font-medium text-xs py-1.5 ${levelGroup.level === 1 ? 'text-blue-600' : levelGroup.level === 2 ? 'text-green-600' : 'text-amber-600'}`}>
+                                                  {item.quantity.toLocaleString()}
+                                                </TableCell>
+                                                <TableCell className="py-1.5">
+                                                  <Badge variant="outline" className="font-normal text-xs">{item.unit}</Badge>
+                                                </TableCell>
+                                                <TableCell className="text-slate-400 text-xs py-1.5 truncate max-w-[120px]">
+                                                  {item.description || '-'}
+                                                </TableCell>
+                                                <TableCell className="py-1.5">
+                                                  <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-6 w-6 p-0 text-red-400 hover:text-red-600 hover:bg-red-50"
+                                                    onClick={() => {
+                                                      deleteBOMItem(item.id);
+                                                      toast.success('자재가 삭제되었습니다.');
+                                                    }}
+                                                  >
+                                                    <Trash2 className="h-3 w-3" />
+                                                  </Button>
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+                                          </TableBody>
+                                        </Table>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>

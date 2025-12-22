@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, PropsWithChildren } from 'react';
+import React, { createContext, useContext, useState, useEffect, PropsWithChildren } from 'react';
 
 // 완제품 데이터 타입 정의
 export interface Product {
@@ -24,11 +24,39 @@ interface ProductContextType {
 
 const ProductContext = createContext<ProductContextType | undefined>(undefined);
 
-// 초기 데이터 없음
-const INITIAL_PRODUCTS: Product[] = [];
+// localStorage 키
+const STORAGE_KEY = 'vietnam_mes_products';
+
+// localStorage에서 데이터 로드
+function loadFromStorage(): Product[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error('ProductContext: localStorage 로드 실패', e);
+  }
+  return [];
+}
+
+// localStorage에 데이터 저장
+function saveToStorage(products: Product[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
+  } catch (e) {
+    console.error('ProductContext: localStorage 저장 실패', e);
+  }
+}
 
 export const ProductProvider = ({ children }: PropsWithChildren) => {
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+  // 초기 로드 시 localStorage에서 데이터 복원
+  const [products, setProducts] = useState<Product[]>(() => loadFromStorage());
+
+  // products 변경 시 localStorage에 저장
+  useEffect(() => {
+    saveToStorage(products);
+  }, [products]);
 
   const addProduct = (newProd: Omit<Product, 'id' | 'regDate'>) => {
     const id = Math.max(...products.map(p => p.id), 0) + 1;
