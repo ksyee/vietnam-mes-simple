@@ -16,8 +16,17 @@ export interface CreateLotInput {
   lineCode?: string
   plannedQty?: number
   workerId?: number
-  // 스캔한 입력 바코드 목록 (자재/반제품)
+  // 스캔한 입력 바코드 목록 (자재/반제품) - 하위 호환성
   inputBarcodes?: string[]
+  // 자재 상세 정보 (바코드, 코드, 이름 포함) - 전표 출력용
+  inputMaterialDetails?: Array<{
+    barcode: string
+    materialCode?: string
+    materialName?: string
+    quantity?: number
+  }>
+  // CA 공정 절압착 품번
+  crimpCode?: string
 }
 
 export interface CompleteLotInput {
@@ -252,11 +261,12 @@ export function ProductionProvider({ children }: ProductionProviderProps) {
     }
   }, [setLoading, setError])
 
-  // 오늘의 LOT 새로고침
+  // LOT 목록 새로고침 (최근 30일)
   const refreshTodayLots = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const lots = await productionService.getTodayLots(state.currentProcess)
+      // 최근 30일 데이터 조회
+      const lots = await productionService.getTodayLots(state.currentProcess, 30)
       setState((prev) => ({
         ...prev,
         todayLots: lots,

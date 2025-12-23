@@ -713,6 +713,105 @@ import { MBOMTreeView, ProcessRoutingEditor } from '@/app/components/mbom'
 />
 ```
 
+## 공정별 자재 관리 시스템
+
+### 개요
+
+공정(CA, MC, SB 등)별로 자재 재고를 독립 관리하는 시스템. 바코드 스캔 시 공정 재고로 자동 등록되고, FIFO 방식으로 차감됩니다.
+
+### 핵심 개념
+
+| 용어 | 설명 |
+|------|------|
+| 공정 재고 | 특정 공정에 배정된 자재 재고 |
+| availableQty | 남은 가용 수량 (quantity - usedQty) |
+| 소진 LOT | availableQty = 0인 LOT (재스캔 불가) |
+| FIFO 차감 | 오래된 LOT부터 순서대로 차감 |
+
+### 주요 서비스 함수
+
+```typescript
+import {
+  registerProcessStock,      // 공정 재고 등록
+  consumeProcessStock,        // 공정 재고 차감 (FIFO)
+  getStocksByProcess,         // 공정별 재고 조회
+  getProcessStockSummary,     // 공정별 통계
+  checkProcessStockStatus,    // LOT 상태 확인
+  getTodayProcessReceivings,  // 금일 스캔 내역
+  getProcessAvailableQty,     // 공정별 가용 수량
+} from '@/services/mock/stockService.mock'
+
+// 공정 재고 등록
+const result = await registerProcessStock({
+  processCode: 'CA',
+  materialId: 1,
+  materialCode: 'M001',
+  materialName: '전선',
+  lotNumber: 'LOT-001',
+  quantity: 100,
+})
+// { success: true, stock: { id, processCode, availableQty }, isNewEntry: boolean }
+
+// 공정 재고 차감 (FIFO)
+await consumeProcessStock('CA', materialId, 50)  // 50개 차감
+
+// LOT 상태 확인
+const status = await checkProcessStockStatus('CA', 'LOT-001')
+// { isExhausted: boolean, canRegister: boolean, availableQty: number }
+
+// 공정별 통계
+const summary = await getProcessStockSummary('CA')
+// { totalLots, totalQuantity, totalUsed, totalAvailable, materialCount }
+```
+
+### 페이지별 기능
+
+| 페이지 | 기능 | 경로 |
+|--------|------|------|
+| 공정 자재 스캔 | 바코드 스캔 → 공정 재고 등록 | `/material/receiving` |
+| 자재 현황 | 공정별 재고 조회/필터링 | `/material/stock` |
+| 공정 모니터링 | 자재 스캔 시 자동 등록, 승인 시 차감 | `/process/:processId` |
+
+### 워크플로우
+
+```
+1. [공정 자재 스캔] 바코드 스캔
+   ↓
+2. 공정 선택 확인 (필수)
+   ↓
+3. LOT 상태 확인 (소진 여부)
+   ↓
+4. 공정 재고로 등록 (registerProcessStock)
+   ↓
+5. [공정 모니터링] 생산 승인
+   ↓
+6. FIFO 차감 (consumeProcessStock)
+   ↓
+7. [자재 현황] 재고 확인
+```
+
+### 공정 코드
+
+| 코드 | 공정명 | 자재투입 |
+|------|--------|---------|
+| CA | 자동절단압착 | O |
+| MC | 수동압착 | O |
+| SB | 서브조립 | O |
+| MS | 중간스트립 | X |
+| SP | 제품조립제공부품 | O |
+| PA | 제품조립 | O |
+| HS | 열수축 | X |
+
+### 테스트 파일
+
+| 파일 | 테스트 수 | 내용 |
+|------|----------|------|
+| `TEST/phaseA_processStock.test.ts` | 9개 | stockService 데이터 구조 |
+| `TEST/phaseB_processViewMaterial.test.ts` | 8개 | ProcessView 자동 등록 |
+| `TEST/phaseC_materialStockProcess.test.ts` | 9개 | MaterialStock 공정별 조회 |
+| `TEST/phaseD_processMaterialScan.test.ts` | 10개 | 공정 자재 스캔 페이지 |
+| `TEST/phaseE_integration.test.ts` | 16개 | 통합 테스트 |
+
 ## 엔터프라이즈 규칙 참조
 
 회사 전반 코딩 스탠더드는 `~/.claude/ENTERPRISE.md` 참조
@@ -925,6 +1024,9 @@ material: {
 
 | 날짜 | 내용 |
 |------|------|
+| 2025-12-23 | 최근 작업 출력 기능 (ProcessView: 완료된 LOT에 전표/라벨/묶음 버튼 추가, selectedHistoryLot 상태 관리, 다이얼로그 연동) |
+| 2025-12-23 | LOT 타입 확장 (LotWithRelations: crimpCode, lotMaterials에 materialCode/materialName 추가, CreateLotInput: inputMaterialDetails 파라미터) |
+| 2025-12-23 | 공정별 자재 관리 시스템 (Phase A~E: processCode 기반 재고 관리, FIFO 차감, 공정 자재 스캔 페이지, 52개 테스트) |
 | 2025-12-23 | CA 묶음 바코드 구현 (BundleDialog: 절압착품번 선택, 검색/필터, 전체선택, 선택정보 표시 - Barcord bundle_dialog.py 스타일) |
 | 2025-12-23 | 바코드 형식 Barcord 일치 (V2: 3자리 시퀀스, Bundle: 4자리 시퀀스, B접두어 제거, isBundleBarcode 함수 추가) |
 | 2025-12-23 | 바코드/라벨 베트남어 적용 (DocumentPreviewDialog, LabelTemplate, labelService, barcodeService: PDF 전표, 라벨 템플릿, 공정명, 오류 메시지 베트남어 변환) |

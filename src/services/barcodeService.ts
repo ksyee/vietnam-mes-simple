@@ -178,9 +178,9 @@ export function parseBarcodeV1(barcode: string): BarcodeV1 | null {
 // ============================================
 
 /**
- * V2 바코드 생성 (신규 포맷 - Barcord 호환)
- * 형식: [Process][ProductCode]Q[Qty]-[ShortCode][YYMMDD]-[LOT(3자리)]
- * 예: CA12345678-001Q100-C251211-001
+ * V2 바코드 생성 (BARCORD 호환)
+ * 형식: {품번}Q{수량}-{공정단축코드}{YYMMDD}-{시퀀스3자리}
+ * 예: 00299318Q100-C251223-001
  *
  * @param processCode 공정 코드
  * @param productCode 품번
@@ -197,46 +197,48 @@ export function generateBarcodeV2(
 ): string {
   const shortCode = PROCESS_SHORT_CODES[processCode.toUpperCase()] || processCode[0]
   const dateStr = getDateString(date)
-  // Barcord 호환: 3자리 일련번호
+  // BARCORD 호환: 3자리 일련번호
   const seqStr = String(sequence).padStart(3, '0')
 
-  return `${processCode.toUpperCase()}${productCode}Q${quantity}-${shortCode}${dateStr}-${seqStr}`
+  // BARCORD 형식: 품번Q수량-공정단축코드날짜-시퀀스
+  return `${productCode}Q${quantity}-${shortCode}${dateStr}-${seqStr}`
 }
 
 /**
  * 번들 바코드 생성 (Barcord 호환)
- * 형식: CA[ProductCode]Q[SetCount]-[YYMMDD]-[LOT(4자리)]
- * 예: CA00299318Q5-251212-0001
+ * 형식: BD-{완제품품번}-{YYMMDD}-{일련번호(3자리)}
+ * 예: BD-00299318-241211-001
  *
- * Barcord bundle_service.py 참조:
- * - 항상 CA 접두어 사용 (CA 공정 묶음이므로)
- * - shortCode 없음, 날짜만 사용
- * - 4자리 일련번호
+ * Barcord bundle_service.py 참조 (BARCORD_IMPLEMENTATION_GUIDE.md 섹션 5.2):
+ * - BD 접두어 사용 (Bundle의 약자)
+ * - 일련번호 3자리
  *
  * @param productCode 완제품 품번
- * @param setQuantity 세트 수량 (포함된 CA 바코드 개수)
- * @param sequence 일련번호 (1-9999)
+ * @param _setQuantity 세트 수량 (포함된 CA 바코드 개수) - 바코드에 포함되지 않음
+ * @param sequence 일련번호 (1-999)
  * @param date 날짜 (기본값: 오늘)
  */
 export function generateBundleBarcode(
   productCode: string,
-  setQuantity: number,
+  _setQuantity: number,
   sequence: number,
   date: Date = new Date()
 ): string {
   const dateStr = getDateString(date)
-  // Barcord 호환: 4자리 일련번호, B 접두어 없음
-  const seqStr = String(sequence).padStart(4, '0')
+  // Barcord 호환: 3자리 일련번호
+  const seqStr = String(sequence).padStart(3, '0')
 
-  // 형식: CA{완제품품번}Q{세트수량}-{날짜}-{일련번호}
-  return `CA${productCode}Q${setQuantity}-${dateStr}-${seqStr}`
+  // 형식: BD-{완제품품번}-{날짜}-{일련번호}
+  return `BD-${productCode}-${dateStr}-${seqStr}`
 }
 
 /**
- * V2 바코드 파싱 (Barcord 호환)
+ * V2 바코드 파싱 (BARCORD 호환)
  *
- * 일반 바코드: [Process][ProductCode]Q[Qty]-[ShortCode][YYMMDD]-[LOT(3자리)]
- * 번들 바코드: CA[ProductCode]Q[SetCount]-[YYMMDD]-[LOT(4자리)]
+ * BARCORD 형식: {품번}Q{수량}-{공정단축코드}{YYMMDD}-{시퀀스3자리}
+ * 예: 00299318Q100-C251223-001
+ *
+ * 레거시 형식도 지원: [Process][ProductCode]Q[Qty]-[ShortCode][YYMMDD]-[LOT]
  */
 export function parseBarcodeV2(barcode: string): BarcodeV2 | null {
   // 구분자 정규화
@@ -247,39 +249,50 @@ export function parseBarcodeV2(barcode: string): BarcodeV2 | null {
 
   const [productPart, datePart, seqPart] = parts
 
-  // 품번 부분 파싱: [Process][ProductCode]Q[Qty]
+  // 품번 부분 파싱: [ProductCode]Q[Qty] 또는 [Process][ProductCode]Q[Qty]
   const qIndex = productPart.indexOf('Q')
   if (qIndex === -1) return null
 
-  const processAndProduct = productPart.slice(0, qIndex)
+  const beforeQ = productPart.slice(0, qIndex)
   const quantityStr = productPart.slice(qIndex + 1)
-
-  // 공정 코드 추출 (앞 2글자)
-  if (processAndProduct.length < 3) return null
-  const processCode = processAndProduct.slice(0, 2)
-  const productCode = processAndProduct.slice(2)
 
   // 수량 파싱
   const quantity = parseInt(quantityStr, 10)
   if (isNaN(quantity)) return null
 
-  // 날짜 부분 파싱 - 번들과 일반 바코드 구분
-  // 번들: 6자리 날짜만 (YYMMDD)
-  // 일반: 7자리 (shortCode + YYMMDD)
+  // 품번 추출 (BARCORD: 공정코드 없음, 레거시: 앞 2글자가 공정코드)
+  let productCode: string
+  let processCode: string
+
+  // 날짜 부분에서 공정 단축코드 추출
   let shortCode: string
   let date: string
-  let isBundle: boolean
+  let isBundle: boolean = false
 
-  if (datePart.length === 6 && /^\d{6}$/.test(datePart)) {
-    // 번들 바코드: 날짜만 있음 (shortCode 없음)
-    shortCode = ''
-    date = datePart
-    isBundle = true
-  } else if (datePart.length === 7) {
-    // 일반 바코드: shortCode + 날짜
+  if (datePart.length === 7) {
+    // 일반 바코드: shortCode(1자리) + 날짜(6자리)
     shortCode = datePart[0]
     date = datePart.slice(1)
-    isBundle = false
+
+    // 단축코드로 공정코드 역산
+    processCode = SHORT_TO_PROCESS[shortCode.toUpperCase()] || shortCode
+
+    // BARCORD 형식: beforeQ가 순수 품번
+    // 레거시 형식: beforeQ 앞 2글자가 공정코드
+    if (beforeQ.length > 2 && beforeQ.slice(0, 2).toUpperCase() === processCode) {
+      // 레거시 형식 (CA00299318 형태)
+      productCode = beforeQ.slice(2)
+    } else {
+      // BARCORD 형식 (00299318 형태)
+      productCode = beforeQ
+    }
+  } else if (datePart.length === 6 && /^\d{6}$/.test(datePart)) {
+    // 번들 바코드 (레거시): 날짜만 있음
+    shortCode = ''
+    date = datePart
+    productCode = beforeQ.length > 2 ? beforeQ.slice(2) : beforeQ
+    processCode = beforeQ.slice(0, 2)
+    isBundle = true
   } else {
     return null
   }
@@ -308,11 +321,57 @@ export function parseBarcodeV2(barcode: string): BarcodeV2 | null {
 
 /**
  * 번들 바코드 여부 확인
- * Barcord 형식: CA{productCode}Q{setCount}-{dateStr}-{seq}
+ * Barcord 형식: BD-{productCode}-{YYMMDD}-{seq(3자리)}
+ * 예시: BD-00299318-241211-001
  */
 export function isBundleBarcode(barcode: string): boolean {
-  const parsed = parseBarcodeV2(barcode)
-  return parsed?.isBundle ?? false
+  if (!barcode || typeof barcode !== 'string') {
+    return false
+  }
+  const normalized = normalizeSeparator(barcode.trim().toUpperCase())
+  // BD 접두어로 시작하는지 확인
+  return normalized.startsWith('BD-')
+}
+
+/**
+ * Bundle 바코드 정규식 패턴
+ * 형식: BD-{productCode}-{YYMMDD}-{seq(3자리)}
+ */
+export const BUNDLE_BARCODE_PATTERN = /^BD-([A-Z0-9]+)-(\d{6})-(\d{3})$/i
+
+/**
+ * Bundle 바코드 파싱된 데이터 타입
+ */
+export interface ParsedBundleBarcode {
+  productCode: string    // 완제품 품번
+  date: string           // YYMMDD
+  sequence: string       // 3자리 시퀀스
+}
+
+/**
+ * Bundle 바코드 파싱
+ * 형식: BD-{productCode}-{YYMMDD}-{seq(3자리)}
+ * 예시: BD-00299318-241211-001
+ */
+export function parseBundleBarcode(barcode: string): ParsedBundleBarcode | null {
+  if (!barcode || typeof barcode !== 'string') {
+    return null
+  }
+
+  const trimmed = barcode.trim().toUpperCase()
+  const match = BUNDLE_BARCODE_PATTERN.exec(trimmed)
+
+  if (!match) {
+    return null
+  }
+
+  const [, productCode, date, sequence] = match
+
+  return {
+    productCode,
+    date,
+    sequence,
+  }
 }
 
 // ============================================
@@ -332,9 +391,15 @@ function normalizeSeparator(barcode: string): string {
 
 /**
  * 바코드 버전 감지
+ * 'bundle' 타입 추가 (BD- 접두어)
  */
-export function detectBarcodeVersion(barcode: string): 1 | 2 | null {
-  const normalized = normalizeSeparator(barcode)
+export function detectBarcodeVersion(barcode: string): 1 | 2 | 'bundle' | null {
+  const normalized = normalizeSeparator(barcode).toUpperCase()
+
+  // Bundle: BD-로 시작
+  if (normalized.startsWith('BD-')) {
+    return 'bundle'
+  }
 
   // V2: Q가 포함되어 있음
   if (normalized.includes('Q')) {
@@ -352,7 +417,7 @@ export function detectBarcodeVersion(barcode: string): 1 | 2 | null {
 
 /**
  * 범용 바코드 파싱
- * V1/V2 자동 감지
+ * V1/V2/Bundle 자동 감지
  */
 export function parseBarcode(barcode: string): ParsedBarcode {
   const raw = barcode.trim()
@@ -371,6 +436,24 @@ export function parseBarcode(barcode: string): ParsedBarcode {
   }
 
   const version = detectBarcodeVersion(raw)
+
+  // Bundle 바코드: BD-{productCode}-{YYMMDD}-{seq}
+  if (version === 'bundle') {
+    const parsed = parseBundleBarcode(raw)
+    if (parsed) {
+      return {
+        raw,
+        version: 2,
+        processCode: 'BD',  // Bundle 식별용
+        productCode: parsed.productCode,
+        quantity: undefined,
+        date: parsed.date,
+        sequence: parsed.sequence,
+        isBundle: true,
+        isValid: true,
+      }
+    }
+  }
 
   if (version === 2) {
     const parsed = parseBarcodeV2(raw)

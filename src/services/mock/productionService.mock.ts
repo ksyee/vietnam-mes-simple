@@ -50,10 +50,13 @@ interface SerializedLot {
   carryOverOut: number
   startedAt: string  // ISO string
   completedAt: string | null  // ISO string
+  crimpCode?: string  // CA 공정 절압착 품번
   lotMaterials: Array<{
     id: number
     materialLotNo: string
     quantity: number
+    materialCode?: string
+    materialName?: string
     material: {
       id: number
       code: string
@@ -159,10 +162,15 @@ export interface LotWithRelations {
   carryOverOut: number
   startedAt: Date
   completedAt: Date | null
+  // CA 공정 절압착 품번
+  crimpCode?: string
   lotMaterials: Array<{
     id: number
     materialLotNo: string
     quantity: number
+    // 자재 정보 (전표 출력용)
+    materialCode?: string
+    materialName?: string
     material: {
       id: number
       code: string
@@ -229,14 +237,48 @@ export async function getLotsByProcess(
 }
 
 /**
- * 오늘의 LOT 목록 조회
+ * LOT 목록 조회 (날짜 범위 지원)
+ * @param processCode 공정 코드 (선택)
+ * @param days 조회 기간 (일 수, 기본값: 30일)
  */
-export async function getTodayLots(processCode?: string): Promise<LotWithRelations[]> {
+export async function getTodayLots(processCode?: string, days: number = 30): Promise<LotWithRelations[]> {
   await new Promise((r) => setTimeout(r, 200))
+
+  // 날짜 범위 계산
+  const endDate = new Date()
+  const startDate = new Date()
+  startDate.setDate(startDate.getDate() - days)
+  startDate.setHours(0, 0, 0, 0)
+
+  let filtered = MOCK_LOTS.filter((lot) => {
+    const lotDate = new Date(lot.startedAt)
+    return lotDate >= startDate && lotDate <= endDate
+  })
+
   if (processCode) {
-    return MOCK_LOTS.filter((l) => l.processCode === processCode.toUpperCase())
+    filtered = filtered.filter((l) => l.processCode === processCode.toUpperCase())
   }
-  return MOCK_LOTS
+
+  // 최신순 정렬
+  return filtered.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+}
+
+/**
+ * 날짜 범위로 LOT 목록 조회
+ */
+export async function getLotsByDateRange(
+  processCode: string,
+  startDate: Date,
+  endDate: Date
+): Promise<LotWithRelations[]> {
+  await new Promise((r) => setTimeout(r, 100))
+
+  return MOCK_LOTS.filter((lot) => {
+    const lotDate = new Date(lot.startedAt)
+    const matchDate = lotDate >= startDate && lotDate <= endDate
+    const matchProcess = processCode ? lot.processCode === processCode.toUpperCase() : true
+    return matchDate && matchProcess
+  }).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
 }
 
 /**
@@ -290,6 +332,14 @@ export async function createLot(input: {
   plannedQty?: number
   workerId?: number
   inputBarcodes?: string[]
+  crimpCode?: string  // CA 공정 절압착 품번
+  // 자재 상세 정보 (바코드, 코드, 이름 포함)
+  inputMaterialDetails?: Array<{
+    barcode: string
+    materialCode?: string
+    materialName?: string
+    quantity?: number
+  }>
 }): Promise<LotWithRelations> {
   await new Promise((r) => setTimeout(r, 300))
 
@@ -299,7 +349,26 @@ export async function createLot(input: {
 
   // 입력 바코드를 lotMaterials로 변환
   const lotMaterials: LotWithRelations['lotMaterials'] = []
-  if (input.inputBarcodes && input.inputBarcodes.length > 0) {
+
+  // 자재 상세 정보가 있는 경우 우선 사용
+  if (input.inputMaterialDetails && input.inputMaterialDetails.length > 0) {
+    let materialId = 1
+    for (const detail of input.inputMaterialDetails) {
+      lotMaterials.push({
+        id: materialId++,
+        materialLotNo: detail.barcode,
+        quantity: detail.quantity || 1,
+        materialCode: detail.materialCode,
+        materialName: detail.materialName,
+        material: {
+          id: materialId,
+          code: detail.materialCode || detail.barcode,
+          name: detail.materialName || '자재',
+        },
+      })
+    }
+  } else if (input.inputBarcodes && input.inputBarcodes.length > 0) {
+    // 기존 바코드 기반 처리 (하위 호환성)
     let materialId = 1
     for (const barcode of input.inputBarcodes) {
       const parsed = parseBarcode(barcode)
@@ -331,6 +400,7 @@ export async function createLot(input: {
     carryOverOut: 0,
     startedAt: new Date(),
     completedAt: null,
+    crimpCode: input.crimpCode,  // CA 공정 절압착 품번 저장
     lotMaterials,
   }
 

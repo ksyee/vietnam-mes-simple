@@ -10,12 +10,25 @@ import { jsPDF } from 'jspdf'
 import QRCode from 'qrcode'
 import JsBarcode from 'jsbarcode'
 import { getProcessName } from './barcodeService'
+import { registerKoreanFont } from '@/lib/koreanFont'
+import { translate, getStoredLocale, type Locale } from '@/lib/i18n'
+
+// ============================================
+// i18n Helper (서비스에서 직접 사용)
+// 라벨/전표는 생산 문서이므로 항상 한국어로 출력
+// ============================================
+
+function tr(key: string, params?: Record<string, string | number>): string {
+  // 생산 문서는 항상 한국어로 출력 (회사 표준)
+  return translate('ko', key, params)
+}
 
 // ============================================
 // Types
 // ============================================
 
-export type LabelTemplate = '100x150mm' | '75x125mm' | '50x80mm'
+// Barcord 스타일 라벨 크기 (작은 사이즈)
+export type LabelTemplate = '75x45mm' | '50x30mm' | '100x50mm' | '80x40mm' | '60x40mm'
 
 export interface LotLabelData {
   lotNumber: string
@@ -51,41 +64,59 @@ interface TemplateConfig {
 }
 
 // ============================================
-// Constants
+// Constants (Barcord 스타일 라벨 크기)
 // ============================================
 
 const TEMPLATE_CONFIGS: Record<LabelTemplate, TemplateConfig> = {
-  '100x150mm': {
-    width: 100,
-    height: 150,
-    orientation: 'portrait',
-    fontSize: { title: 14, normal: 10, small: 8 },
-    qrSize: 35,
-    barcodeWidth: 80,
-    barcodeHeight: 25,
-  },
-  '75x125mm': {
+  '75x45mm': {
     width: 75,
-    height: 125,
-    orientation: 'portrait',
-    fontSize: { title: 12, normal: 9, small: 7 },
-    qrSize: 30,
-    barcodeWidth: 60,
-    barcodeHeight: 20,
-  },
-  '50x80mm': {
-    width: 50,
-    height: 80,
-    orientation: 'portrait',
+    height: 45,
+    orientation: 'landscape',
     fontSize: { title: 10, normal: 8, small: 6 },
-    qrSize: 20,
+    qrSize: 10,
+    barcodeWidth: 60,
+    barcodeHeight: 8,
+  },
+  '50x30mm': {
+    width: 50,
+    height: 30,
+    orientation: 'landscape',
+    fontSize: { title: 8, normal: 6, small: 5 },
+    qrSize: 7,
     barcodeWidth: 40,
-    barcodeHeight: 15,
+    barcodeHeight: 6,
+  },
+  '100x50mm': {
+    width: 100,
+    height: 50,
+    orientation: 'landscape',
+    fontSize: { title: 12, normal: 9, small: 7 },
+    qrSize: 12,
+    barcodeWidth: 80,
+    barcodeHeight: 10,
+  },
+  '80x40mm': {
+    width: 80,
+    height: 40,
+    orientation: 'landscape',
+    fontSize: { title: 10, normal: 8, small: 6 },
+    qrSize: 10,
+    barcodeWidth: 65,
+    barcodeHeight: 8,
+  },
+  '60x40mm': {
+    width: 60,
+    height: 40,
+    orientation: 'landscape',
+    fontSize: { title: 9, normal: 7, small: 6 },
+    qrSize: 9,
+    barcodeWidth: 50,
+    barcodeHeight: 7,
   },
 }
 
 const DEFAULT_OPTIONS: LabelOptions = {
-  template: '100x150mm',
+  template: '75x45mm',  // Barcord 기본 사이즈
   showQR: true,
   showBarcode: true,
   showLogo: false,
@@ -210,79 +241,81 @@ export async function createLabel(
     format: [config.width, config.height],
   })
 
-  // 폰트 설정 (한글 지원 - 기본 폰트 사용)
-  pdf.setFont('helvetica')
-
-  let y = 10 // 시작 y 좌표
-
-  // 제목 (공정명)
-  pdf.setFontSize(config.fontSize.title)
-  const processName = getProcessName(data.processCode)
-  pdf.text(processName, config.width / 2, y, { align: 'center' })
-  y += 8
-
-  // 구분선
-  pdf.setLineWidth(0.5)
-  pdf.line(5, y, config.width - 5, y)
-  y += 5
-
-  // LOT 번호
-  pdf.setFontSize(config.fontSize.normal)
-  pdf.text(`LOT: ${data.lotNumber}`, 5, y)
-  y += 6
-
-  // 품번/품명
-  if (data.productCode) {
-    pdf.text(`Code: ${data.productCode}`, 5, y)
-    y += 5
-  }
-  if (data.productName) {
-    pdf.setFontSize(config.fontSize.small)
-    const truncatedName = data.productName.length > 20
-      ? data.productName.substring(0, 20) + '...'
-      : data.productName
-    pdf.text(`Name: ${truncatedName}`, 5, y)
-    y += 5
+  // 한글 폰트 등록
+  const fontRegistered = await registerKoreanFont(pdf)
+  if (!fontRegistered) {
+    console.warn('한글 폰트 등록 실패, 기본 폰트 사용')
+    pdf.setFont('helvetica')
   }
 
-  // 수량
-  pdf.setFontSize(config.fontSize.normal)
-  pdf.text(`QTY: ${data.quantity.toLocaleString()}`, 5, y)
-  y += 6
+  /**
+   * Barcord 스타일 라벨 레이아웃:
+   * ┌─────────────────────────────┐
+   * │ [CA] 자동절단압착      [QR] │
+   * │ 품번: 00299318         [QR] │
+   * │ LOT: CA00299318Q1000-C...   │
+   * │ 수량: 1000 EA               │
+   * │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓ (1D 바코드) │
+   * │ 일시: 2025-12-11 22:52      │
+   * └─────────────────────────────┘
+   */
 
-  // 날짜
-  pdf.setFontSize(config.fontSize.small)
-  pdf.text(`Date: ${data.date}`, 5, y)
-  y += 5
+  const margin = 4
+  let y = margin + 2
 
-  // 라인/작업자
-  if (data.lineCode) {
-    pdf.text(`Line: ${data.lineCode}`, 5, y)
-    y += 5
-  }
-  if (data.workerName) {
-    pdf.text(`Worker: ${data.workerName}`, 5, y)
-    y += 5
-  }
+  // QR 코드 (우측 상단)
+  const qrSize = Math.min(config.qrSize, config.height * 0.25)
+  let qrDataUrl: string | null = null
 
-  // 구분선
-  y += 3
-  pdf.line(5, y, config.width - 5, y)
-  y += 5
-
-  // QR 코드
   if (opts.showQR) {
     try {
-      const qrDataUrl = await generateLotQRCode(data)
-      const qrX = (config.width - config.qrSize) / 2
-      pdf.addImage(qrDataUrl, 'PNG', qrX, y, config.qrSize, config.qrSize)
-      y += config.qrSize + 5
+      qrDataUrl = await generateLotQRCode(data)
+      pdf.addImage(
+        qrDataUrl,
+        'PNG',
+        config.width - margin - qrSize,
+        margin,
+        qrSize,
+        qrSize
+      )
     } catch {
       console.warn('QR 코드 추가 실패')
     }
   }
 
-  // 바코드
+  // 텍스트 영역 너비 (QR이 있으면 그 왼쪽까지)
+  const textWidth = opts.showQR ? config.width - margin * 2 - qrSize - 2 : config.width - margin * 2
+
+  // 1. 공정명 ([CA] 자동절단압착)
+  const processName = tr(`process.${data.processCode}`) || getProcessName(data.processCode)
+  pdf.setFontSize(config.fontSize.title)
+  pdf.setTextColor(0, 0, 0)
+  pdf.text(`[${data.processCode}] ${processName}`, margin, y + 4)
+  y += config.fontSize.title * 0.45
+
+  // 2. 품번 (i18n 적용)
+  pdf.setFontSize(config.fontSize.normal)
+  pdf.text(`${tr('label_print.product_code_prefix')} ${data.productCode || '-'}`, margin, y + 4)
+  y += config.fontSize.normal * 0.5
+
+  // 3. LOT 번호 (길이에 따라 폰트 크기 조절)
+  const lotNumber = data.lotNumber
+  let lotFontSize = config.fontSize.normal
+  if (lotNumber.length > 25) {
+    lotFontSize = config.fontSize.small * 0.9
+  } else if (lotNumber.length > 20) {
+    lotFontSize = config.fontSize.small
+  }
+  pdf.setFontSize(lotFontSize)
+  pdf.text(`${tr('label_print.lot_prefix')} ${lotNumber}`, margin, y + 4)
+  y += lotFontSize * 0.5
+
+  // 4. 수량 (i18n 적용)
+  pdf.setFontSize(config.fontSize.normal)
+  pdf.text(`${tr('label_print.quantity_prefix')} ${data.quantity.toLocaleString()} EA`, margin, y + 4)
+  y += config.fontSize.normal * 0.6
+
+  // 5. 1D 바코드 (중앙)
   if (opts.showBarcode) {
     try {
       const barcodeDataUrl = generate1DBarcode(data.lotNumber)
@@ -295,10 +328,21 @@ export async function createLabel(
         config.barcodeWidth,
         config.barcodeHeight
       )
+      y += config.barcodeHeight + 2
     } catch {
       console.warn('바코드 추가 실패')
     }
   }
+
+  // 6. 일시 (하단) - i18n 적용
+  pdf.setFontSize(config.fontSize.small)
+  pdf.setTextColor(100, 100, 100)
+  pdf.text(`${tr('label_print.date_prefix')} ${data.date}`, margin, y + 3)
+
+  // 테두리
+  pdf.setDrawColor(0, 0, 0)
+  pdf.setLineWidth(0.5)
+  pdf.rect(1, 1, config.width - 2, config.height - 2, 'S')
 
   // 여러 장 복사
   if (opts.copies > 1) {
@@ -333,42 +377,23 @@ export async function createBundleLabel(
     format: [config.width, config.height],
   })
 
-  pdf.setFont('helvetica')
+  // 한글 폰트 등록
+  const fontRegistered = await registerKoreanFont(pdf)
+  if (!fontRegistered) {
+    console.warn('한글 폰트 등록 실패, 기본 폰트 사용')
+    pdf.setFont('helvetica')
+  }
 
-  let y = 10
+  /**
+   * Barcord 스타일 번들 라벨 레이아웃
+   */
 
-  // 번들 표시
-  pdf.setFontSize(config.fontSize.title)
-  pdf.text('BUNDLE', config.width / 2, y, { align: 'center' })
-  y += 8
+  const margin = 4
+  let y = margin + 2
 
-  pdf.setLineWidth(0.5)
-  pdf.line(5, y, config.width - 5, y)
-  y += 5
+  // QR 코드 (우측 상단)
+  const qrSize = Math.min(config.qrSize, config.height * 0.25)
 
-  // 번들 번호
-  pdf.setFontSize(config.fontSize.normal)
-  pdf.text(`Bundle: ${bundleNo}`, 5, y)
-  y += 6
-
-  // 품번/품명
-  pdf.text(`Code: ${productCode}`, 5, y)
-  y += 5
-  pdf.setFontSize(config.fontSize.small)
-  pdf.text(`Name: ${productName}`, 5, y)
-  y += 5
-
-  // 수량 정보
-  pdf.setFontSize(config.fontSize.normal)
-  pdf.text(`Sets: ${setQty} | Total: ${totalQty}`, 5, y)
-  y += 6
-
-  // 날짜
-  pdf.setFontSize(config.fontSize.small)
-  pdf.text(`Date: ${date}`, 5, y)
-  y += 8
-
-  // QR 코드
   if (opts.showQR) {
     try {
       const qrData = JSON.stringify({
@@ -379,15 +404,49 @@ export async function createBundleLabel(
         date,
       })
       const qrDataUrl = await generateQRCode(qrData)
-      const qrX = (config.width - config.qrSize) / 2
-      pdf.addImage(qrDataUrl, 'PNG', qrX, y, config.qrSize, config.qrSize)
-      y += config.qrSize + 5
+      pdf.addImage(
+        qrDataUrl,
+        'PNG',
+        config.width - margin - qrSize,
+        margin,
+        qrSize,
+        qrSize
+      )
     } catch {
       console.warn('QR 코드 추가 실패')
     }
   }
 
-  // 바코드
+  // 1. 번들 타이틀 (i18n 적용)
+  pdf.setFontSize(config.fontSize.title)
+  pdf.setTextColor(0, 0, 0)
+  pdf.text(tr('label_print.bundle_title'), margin, y + 4)
+  y += config.fontSize.title * 0.45
+
+  // 2. 품번 (i18n 적용)
+  pdf.setFontSize(config.fontSize.normal)
+  pdf.text(`${tr('label_print.product_code_prefix')} ${productCode}`, margin, y + 4)
+  y += config.fontSize.normal * 0.5
+
+  // 3. 품명
+  const truncatedName = productName.length > 20
+    ? productName.substring(0, 20) + '..'
+    : productName
+  pdf.setFontSize(config.fontSize.small)
+  pdf.text(`${tr('label.productName')}: ${truncatedName}`, margin, y + 4)
+  y += config.fontSize.small * 0.5
+
+  // 4. 번들 번호 (i18n 적용)
+  pdf.setFontSize(config.fontSize.normal)
+  pdf.text(`${tr('label_print.lot_prefix')} ${bundleNo}`, margin, y + 4)
+  y += config.fontSize.normal * 0.5
+
+  // 5. 수량 정보 (i18n 적용)
+  pdf.setFontSize(config.fontSize.normal)
+  pdf.text(`${tr('label_print.set_qty')} ${setQty}  |  ${tr('label_print.total_qty')} ${totalQty.toLocaleString()} EA`, margin, y + 4)
+  y += config.fontSize.normal * 0.6
+
+  // 6. 1D 바코드 (중앙)
   if (opts.showBarcode) {
     try {
       const barcodeDataUrl = generate1DBarcode(bundleNo)
@@ -400,10 +459,21 @@ export async function createBundleLabel(
         config.barcodeWidth,
         config.barcodeHeight
       )
+      y += config.barcodeHeight + 2
     } catch {
       console.warn('바코드 추가 실패')
     }
   }
+
+  // 7. 일시 (하단) - i18n 적용
+  pdf.setFontSize(config.fontSize.small)
+  pdf.setTextColor(100, 100, 100)
+  pdf.text(`${tr('label_print.date_prefix')} ${date}`, margin, y + 3)
+
+  // 테두리
+  pdf.setDrawColor(0, 0, 0)
+  pdf.setLineWidth(0.5)
+  pdf.rect(1, 1, config.width - 2, config.height - 2, 'S')
 
   return pdf
 }
@@ -454,7 +524,7 @@ export function labelToBase64(pdf: jsPDF): string {
 // ============================================
 
 /**
- * 템플릿 목록 조회
+ * 템플릿 목록 조회 (Barcord 스타일 작은 라벨 사이즈)
  */
 export function getTemplates(): Array<{
   id: LabelTemplate
@@ -463,9 +533,11 @@ export function getTemplates(): Array<{
   height: number
 }> {
   return [
-    { id: '100x150mm', name: '대형 (100x150mm)', width: 100, height: 150 },
-    { id: '75x125mm', name: '중형 (75x125mm)', width: 75, height: 125 },
-    { id: '50x80mm', name: '소형 (50x80mm)', width: 50, height: 80 },
+    { id: '75x45mm', name: '75 x 45 (기본)', width: 75, height: 45 },
+    { id: '50x30mm', name: '50 x 30', width: 50, height: 30 },
+    { id: '100x50mm', name: '100 x 50', width: 100, height: 50 },
+    { id: '80x40mm', name: '80 x 40', width: 80, height: 40 },
+    { id: '60x40mm', name: '60 x 40', width: 60, height: 40 },
   ]
 }
 
@@ -489,6 +561,12 @@ export async function createMultipleLabels(
     format: [config.width, config.height],
   })
 
+  // 한글 폰트 등록
+  const fontRegistered = await registerKoreanFont(pdf)
+  if (!fontRegistered) {
+    console.warn('한글 폰트 등록 실패, 기본 폰트 사용')
+  }
+
   for (let i = 0; i < dataList.length; i++) {
     if (i > 0) {
       pdf.addPage()
@@ -496,48 +574,51 @@ export async function createMultipleLabels(
 
     const data = dataList[i]
 
-    // 각 페이지에 라벨 내용 그리기
-    pdf.setFont('helvetica')
-    let y = 10
+    // Barcord 스타일 라벨 레이아웃
+    const margin = 4
+    let y = margin + 2
 
-    // 공정명
-    pdf.setFontSize(config.fontSize.title)
-    pdf.text(getProcessName(data.processCode), config.width / 2, y, { align: 'center' })
-    y += 8
+    // QR 코드 (우측 상단)
+    const qrSize = Math.min(config.qrSize, config.height * 0.25)
 
-    // LOT 번호
-    pdf.setFontSize(config.fontSize.normal)
-    pdf.text(`LOT: ${data.lotNumber}`, 5, y)
-    y += 6
-
-    // 품번
-    if (data.productCode) {
-      pdf.text(`Code: ${data.productCode}`, 5, y)
-      y += 5
-    }
-
-    // 수량
-    pdf.text(`QTY: ${data.quantity.toLocaleString()}`, 5, y)
-    y += 6
-
-    // 날짜
-    pdf.setFontSize(config.fontSize.small)
-    pdf.text(`Date: ${data.date}`, 5, y)
-    y += 8
-
-    // QR 코드
     if (opts.showQR) {
       try {
         const qrDataUrl = await generateLotQRCode(data)
-        const qrX = (config.width - config.qrSize) / 2
-        pdf.addImage(qrDataUrl, 'PNG', qrX, y, config.qrSize, config.qrSize)
-        y += config.qrSize + 5
+        pdf.addImage(
+          qrDataUrl,
+          'PNG',
+          config.width - margin - qrSize,
+          margin,
+          qrSize,
+          qrSize
+        )
       } catch {
         // QR 생성 실패 무시
       }
     }
 
-    // 바코드
+    // 1. 공정명 (i18n 적용)
+    const processName = tr(`process.${data.processCode}`) || getProcessName(data.processCode)
+    pdf.setFontSize(config.fontSize.title)
+    pdf.setTextColor(0, 0, 0)
+    pdf.text(`[${data.processCode}] ${processName}`, margin, y + 4)
+    y += config.fontSize.title * 0.45
+
+    // 2. 품번 (i18n 적용)
+    pdf.setFontSize(config.fontSize.normal)
+    pdf.text(`${tr('label_print.product_code_prefix')} ${data.productCode || '-'}`, margin, y + 4)
+    y += config.fontSize.normal * 0.5
+
+    // 3. LOT 번호 (i18n 적용)
+    pdf.setFontSize(config.fontSize.normal)
+    pdf.text(`${tr('label_print.lot_prefix')} ${data.lotNumber}`, margin, y + 4)
+    y += config.fontSize.normal * 0.5
+
+    // 4. 수량 (i18n 적용)
+    pdf.text(`${tr('label_print.quantity_prefix')} ${data.quantity.toLocaleString()} EA`, margin, y + 4)
+    y += config.fontSize.normal * 0.6
+
+    // 5. 1D 바코드 (중앙)
     if (opts.showBarcode) {
       try {
         const barcodeDataUrl = generate1DBarcode(data.lotNumber)
@@ -550,10 +631,21 @@ export async function createMultipleLabels(
           config.barcodeWidth,
           config.barcodeHeight
         )
+        y += config.barcodeHeight + 2
       } catch {
         // 바코드 생성 실패 무시
       }
     }
+
+    // 6. 일시 (하단) - i18n 적용
+    pdf.setFontSize(config.fontSize.small)
+    pdf.setTextColor(100, 100, 100)
+    pdf.text(`${tr('label_print.date_prefix')} ${data.date}`, margin, y + 3)
+
+    // 테두리
+    pdf.setDrawColor(0, 0, 0)
+    pdf.setLineWidth(0.5)
+    pdf.rect(1, 1, config.width - 2, config.height - 2, 'S')
   }
 
   return pdf

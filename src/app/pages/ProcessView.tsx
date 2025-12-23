@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table'
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs'
 import {
   Play,
   Square,
@@ -45,6 +46,7 @@ import {
   Check,
   AlertTriangle,
   FileText,
+  Search,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -64,7 +66,13 @@ import { parseBarcode, parseHQBarcode, getProcessName, generateBarcodeV2 } from 
 import { getLinesByProcess, type Line } from '@/services/mock/lineService.mock'
 import { getInProgressLots, type LotWithRelations } from '@/services/mock/productionService.mock'
 import { BundleDialog, LabelPreviewDialog, DocumentPreviewDialog, type DocumentData, type InputMaterialInfo } from '../components/dialogs'
-import { deductByBOM, rollbackBOMDeduction } from '@/services/mock/stockService.mock'
+import {
+  deductByBOM,
+  rollbackBOMDeduction,
+  registerProcessStock,
+  checkProcessStockStatus,
+  type ProcessStockStatus,
+} from '@/services/mock/stockService.mock'
 import { createLabel, printLabel, downloadLabel } from '@/services/labelService'
 
 // 스캔된 아이템 타입
@@ -134,6 +142,13 @@ export const ProcessView = () => {
   // Phase 6: 스캔 임시 목록 상태
   const [scannedItems, setScannedItems] = useState<ScannedItem[]>([])
   const [selectAll, setSelectAll] = useState(false)
+
+  // 작업 목록 필터 상태
+  const [statusFilter, setStatusFilter] = useState<'all' | 'IN_PROGRESS' | 'COMPLETED'>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // 최근 작업에서 선택한 LOT (전표/라벨/묶음 출력용)
+  const [selectedHistoryLot, setSelectedHistoryLot] = useState<LotWithRelations | null>(null)
 
   // 다중 작업 지원: 진행 중인 작업 목록
   const [inProgressTasks, setInProgressTasks] = useState<LotWithRelations[]>([])
@@ -207,6 +222,27 @@ export const ProcessView = () => {
 
     return materialCodes
   }, [processCode, selectedProductCode, selectedCrimpCode, bomGroups])
+
+  // 작업 목록 필터링
+  const filteredLots = useMemo(() => {
+    let filtered = [...todayLots]
+
+    // 상태 필터
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(lot => lot.status === statusFilter)
+    }
+
+    // 검색 필터 (LOT 번호, 품번)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim()
+      filtered = filtered.filter(lot =>
+        lot.lotNumber.toLowerCase().includes(query) ||
+        lot.product?.code?.toLowerCase().includes(query)
+      )
+    }
+
+    return filtered
+  }, [todayLots, statusFilter, searchQuery])
 
   // 완제품 선택 핸들러
   const handleSelectProduct = (code: string) => {
@@ -410,7 +446,7 @@ export const ProcessView = () => {
     return 'material'
   }
 
-  // 바코드 스캔 처리 - 임시 목록에 추가
+  // 바코드 스캔 처리 - 공정 재고 자동 등록 + 임시 목록에 추가
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!barcode.trim()) return
@@ -432,7 +468,7 @@ export const ProcessView = () => {
       return
     }
 
-    // 중복 체크
+    // 중복 체크 (현재 스캔 목록에서)
     if (scannedItems.some(item => item.barcode === trimmedBarcode)) {
       toast.error('이미 스캔된 바코드입니다.')
       setBarcode('')
@@ -483,13 +519,55 @@ export const ProcessView = () => {
       }
     }
 
+    // Phase B: 공정 재고 상태 확인 및 자동 등록
+    const quantity = hqParsed.quantity || (parsed.isValid ? (parsed.quantity || 1) : 1)
+
+    // 공정 재고 상태 확인
+    const stockStatus = await checkProcessStockStatus(processCode, trimmedBarcode)
+
+    if (stockStatus.isExhausted) {
+      // 이미 소진된 LOT - 경고 메시지 표시
+      toast.error(
+        `이미 사용이 완료된 바코드입니다.\n(LOT: ${trimmedBarcode}, 사용량: ${stockStatus.usedQty})`,
+        { duration: 5000 }
+      )
+      setBarcode('')
+      return
+    }
+
+    // 공정 재고 자동 등록
+    if (matchedMaterial && isValidMaterial) {
+      const registerResult = await registerProcessStock({
+        processCode,
+        materialId: matchedMaterial.id,
+        materialCode: matchedMaterial.code,
+        materialName: matchedMaterial.name,
+        lotNumber: trimmedBarcode,
+        quantity,
+      })
+
+      if (!registerResult.success) {
+        toast.error(registerResult.error || '공정 재고 등록 실패')
+        setBarcode('')
+        return
+      }
+
+      // 기존 LOT에 추가된 경우 알림
+      if (!registerResult.isNewEntry) {
+        toast.info(
+          `기존 재고에 추가됨 (총 ${registerResult.stock?.quantity}개, 가용 ${registerResult.stock?.availableQty}개)`,
+          { duration: 3000 }
+        )
+      }
+    }
+
     // 임시 목록에 추가
     const newItem: ScannedItem = {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       barcode: trimmedBarcode,
       processCode: parsed.isValid ? parsed.processCode : 'UNKNOWN',
       productCode: parsed.isValid ? parsed.productCode : undefined,
-      quantity: hqParsed.quantity || (parsed.isValid ? (parsed.quantity || 1) : 1),
+      quantity,
       type: itemType,
       scannedAt: new Date(),
       isSelected: isValidMaterial, // BOM 미등록 자재는 기본 선택 해제
@@ -627,11 +705,17 @@ export const ProcessView = () => {
       const newLot = await createLot({
         processCode,
         productId,
+        productCode: selectedProductCode,
         plannedQty: totalQty,
         lineCode: currentLine?.code,
         workerId: user?.id,
-        // 투입 자재 정보 (선택된 바코드들)
-        inputBarcodes: selectedItems.map(item => item.barcode),
+        // 투입 자재 상세 정보 (바코드, 코드, 이름 포함)
+        inputMaterialDetails: selectedItems.map(item => ({
+          barcode: item.barcode,
+          materialCode: item.materialCode,
+          materialName: item.materialName,
+          quantity: item.quantity,
+        })),
         // CA 공정일 때 절압착 품번 추가
         ...(processCode === 'CA' && selectedCrimpCode && { crimpCode: selectedCrimpCode }),
       })
@@ -1342,15 +1426,17 @@ export const ProcessView = () => {
                 )}
                 <Button
                   variant="outline"
-                  disabled={!currentLot || isProcessing}
+                  disabled={!currentLot || isProcessing || currentLot?.status !== 'COMPLETED'}
                   onClick={() => setShowDocumentDialog(true)}
+                  title={currentLot?.status !== 'COMPLETED' ? '완료 상태에서만 출력 가능' : ''}
                 >
                   <FileText className="mr-2 h-4 w-4" /> 전표
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={!currentLot || isProcessing}
+                  disabled={!currentLot || isProcessing || currentLot?.status !== 'COMPLETED'}
                   onClick={() => setShowLabelDialog(true)}
+                  title={currentLot?.status !== 'COMPLETED' ? '완료 상태에서만 출력 가능' : ''}
                 >
                   <Printer className="mr-2 h-4 w-4" /> 라벨
                 </Button>
@@ -1381,48 +1467,79 @@ export const ProcessView = () => {
         {/* Right Panel: History Grid */}
         <div className="lg:col-span-1 flex flex-col h-full">
           <Card className="h-full shadow-md border-slate-200 flex flex-col">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <div className="space-y-1">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <History className="h-5 w-5 text-slate-500" />
-                  금일 작업 ({todayLots.length})
-                </CardTitle>
+            <CardHeader className="pb-2 space-y-3">
+              {/* 헤더 */}
+              <div className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <History className="h-5 w-5 text-slate-500" />
+                    최근 작업 ({filteredLots.length}/{todayLots.length})
+                  </CardTitle>
+                  <CardDescription className="text-xs text-slate-400 mt-1">최근 30일</CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refreshTodayLots()}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    '새로고침'
+                  )}
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => refreshTodayLots()}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  '새로고침'
-                )}
-              </Button>
+
+              {/* 상태 탭 필터 */}
+              <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as 'all' | 'IN_PROGRESS' | 'COMPLETED')} className="w-full">
+                <TabsList className="grid w-full grid-cols-3 h-8">
+                  <TabsTrigger value="all" className="text-xs h-7">
+                    전체 ({todayLots.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="IN_PROGRESS" className="text-xs h-7">
+                    진행 ({todayLots.filter(l => l.status === 'IN_PROGRESS').length})
+                  </TabsTrigger>
+                  <TabsTrigger value="COMPLETED" className="text-xs h-7">
+                    완료 ({todayLots.filter(l => l.status === 'COMPLETED').length})
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              {/* 검색 입력 */}
+              <div className="relative">
+                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  placeholder="LOT 번호, 품번 검색..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8 h-8 text-sm"
+                />
+              </div>
             </CardHeader>
             <CardContent className="flex-1 overflow-auto p-0">
               <Table>
                 <TableHeader className="bg-slate-50 sticky top-0 z-10">
                   <TableRow>
-                    <TableHead className="w-[60px]">시간</TableHead>
+                    <TableHead className="w-[70px]">일시</TableHead>
                     <TableHead>LOT</TableHead>
                     <TableHead className="text-right">수량</TableHead>
                     <TableHead className="text-center w-[60px]">상태</TableHead>
+                    <TableHead className="text-center w-[100px]">출력</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {todayLots.length === 0 ? (
+                  {filteredLots.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={4}
+                        colSpan={5}
                         className="text-center py-10 text-slate-500"
                       >
-                        작업 이력이 없습니다.
+                        {searchQuery ? '검색 결과가 없습니다.' : '작업 이력이 없습니다.'}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    todayLots.map((lot) => (
+                    filteredLots.map((lot) => (
                       <TableRow
                         key={lot.id}
                         className={`cursor-pointer ${currentLot?.id === lot.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
@@ -1433,10 +1550,10 @@ export const ProcessView = () => {
                         }}
                       >
                         <TableCell className="font-medium text-slate-500 text-xs">
-                          {new Date(lot.startedAt).toLocaleTimeString('ko-KR', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
+                          <div className="flex flex-col">
+                            <span>{new Date(lot.startedAt).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })}</span>
+                            <span className="text-slate-400">{new Date(lot.startedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
                         </TableCell>
                         <TableCell className="font-mono text-xs">
                           {lot.lotNumber.length > 15
@@ -1453,6 +1570,58 @@ export const ProcessView = () => {
                           >
                             {lot.status === 'COMPLETED' ? '완료' : '진행'}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {lot.status === 'COMPLETED' ? (
+                            <div className="flex items-center justify-center gap-1">
+                              {/* 전표 버튼 */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedHistoryLot(lot)
+                                  setShowDocumentDialog(true)
+                                }}
+                                title="전표 출력"
+                              >
+                                <FileText size={14} />
+                              </Button>
+                              {/* 라벨 버튼 */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedHistoryLot(lot)
+                                  setShowLabelDialog(true)
+                                }}
+                                title="라벨 출력"
+                              >
+                                <Printer size={14} />
+                              </Button>
+                              {/* CA 공정일 때만 묶음 버튼 */}
+                              {processCode === 'CA' && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 w-6 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedHistoryLot(lot)
+                                    setShowBundleDialog(true)
+                                  }}
+                                  title="묶음 바코드"
+                                >
+                                  <Package size={14} />
+                                </Button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-slate-300 text-xs">-</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))
@@ -1477,59 +1646,97 @@ export const ProcessView = () => {
       )}
 
       {/* 전표 미리보기 다이얼로그 (Barcord 스타일) */}
-      {currentLot && (
+      {(selectedHistoryLot || currentLot) && (
         <DocumentPreviewDialog
           open={showDocumentDialog}
-          onOpenChange={handleDocumentDialogClose}
+          onOpenChange={(open) => {
+            setShowDocumentDialog(open)
+            if (!open) {
+              // 다이얼로그 닫을 때 선택 초기화
+              if (selectedHistoryLot) {
+                // 최근 작업에서 선택한 경우 라벨 다이얼로그 열기 (선택 유지)
+                setShowLabelDialog(true)
+              } else {
+                // 현재 작업에서 선택한 경우 기존 로직
+                handleDocumentDialogClose(open)
+              }
+            }
+          }}
           data={{
-            lotNumber: currentLot.lotNumber,
-            productCode: currentLot.product?.code || selectedProductCode || '-',
-            productName: currentLot.product?.name || selectedProduct?.name || '-',
-            quantity: completedQty || currentLot.completedQty || currentLot.plannedQty,
+            lotNumber: (selectedHistoryLot || currentLot)!.lotNumber,
+            productCode: (selectedHistoryLot || currentLot)!.product?.code || selectedProductCode || '-',
+            productName: (selectedHistoryLot || currentLot)!.product?.name || selectedProduct?.name || '-',
+            quantity: selectedHistoryLot ? selectedHistoryLot.completedQty : (completedQty || currentLot!.completedQty || currentLot!.plannedQty),
             unit: 'EA',
-            productionDate: new Date(currentLot.startedAt),
-            processCode: currentLot.processCode,
-            processName: getProcessName(currentLot.processCode),
-            inputMaterials: scannedItems
-              .filter(item => item.isSelected || item.isValidMaterial)
-              .map(item => ({
-                lotNumber: item.barcode,
-                productCode: item.materialCode || item.productCode || '-',
-                name: item.materialName || item.productCode || '-',
-                quantity: item.quantity,
-                unit: 'EA',
-                sourceType: item.type === 'material' ? 'material' as const : 'production' as const,
-                processCode: item.processCode,
-              })),
-            crimpProductCode: selectedCrimpCode || undefined,
-            lineCode: currentLot.lineCode || currentLine?.code || undefined,
-            plannedQuantity: currentLot.plannedQty,
-            completedQuantity: completedQty || currentLot.completedQty,
-            defectQuantity: defectQty || currentLot.defectQty || 0,
-            workerName: currentLot.worker?.name || user?.name,
+            productionDate: new Date((selectedHistoryLot || currentLot)!.startedAt),
+            processCode: (selectedHistoryLot || currentLot)!.processCode,
+            processName: getProcessName((selectedHistoryLot || currentLot)!.processCode),
+            inputMaterials: selectedHistoryLot
+              ? (selectedHistoryLot.lotMaterials || []).map(lm => ({
+                  lotNumber: lm.materialLotNo,
+                  productCode: lm.materialCode || '-',
+                  name: lm.materialName || '-',
+                  quantity: lm.quantity,
+                  unit: 'EA',
+                  sourceType: 'material' as const,
+                  processCode: selectedHistoryLot.processCode,
+                }))
+              : scannedItems
+                  .filter(item => item.isSelected || item.isValidMaterial)
+                  .map(item => ({
+                    lotNumber: item.barcode,
+                    productCode: item.materialCode || item.productCode || '-',
+                    name: item.materialName || item.productCode || '-',
+                    quantity: item.quantity,
+                    unit: 'EA',
+                    sourceType: item.type === 'material' ? 'material' as const : 'production' as const,
+                    processCode: item.processCode,
+                  })),
+            crimpProductCode: selectedHistoryLot?.crimpCode || selectedCrimpCode || undefined,
+            lineCode: (selectedHistoryLot || currentLot)!.lineCode || currentLine?.code || undefined,
+            plannedQuantity: (selectedHistoryLot || currentLot)!.plannedQty,
+            completedQuantity: selectedHistoryLot ? selectedHistoryLot.completedQty : (completedQty || currentLot!.completedQty),
+            defectQuantity: selectedHistoryLot ? (selectedHistoryLot.defectQty || 0) : (defectQty || currentLot!.defectQty || 0),
+            workerName: (selectedHistoryLot || currentLot)!.worker?.name || user?.name,
           }}
           onPrint={() => {
             toast.success('전표 인쇄 요청 완료')
             // 전표 출력 후 라벨 다이얼로그로 이동
-            handleDocumentPrinted()
+            if (!selectedHistoryLot) {
+              handleDocumentPrinted()
+            }
           }}
         />
       )}
 
       {/* 라벨 미리보기 다이얼로그 */}
-      {currentLot && (
+      {(selectedHistoryLot || currentLot) && (
         <LabelPreviewDialog
           open={showLabelDialog}
-          onOpenChange={handleLabelDialogClose}
+          onOpenChange={(open) => {
+            setShowLabelDialog(open)
+            if (!open) {
+              // 다이얼로그 닫을 때 선택 초기화
+              if (selectedHistoryLot) {
+                setSelectedHistoryLot(null)
+              } else if (currentLot?.status === 'COMPLETED') {
+                // 완료된 LOT면 초기화
+                setCurrentLot(null)
+                setSelectedTaskId(null)
+                setCompletedQty(0)
+                setDefectQty(0)
+              }
+            }
+          }}
           lotData={{
-            lotNumber: currentLot.lotNumber,
-            processCode: currentLot.processCode,
-            productCode: currentLot.product?.code,
-            productName: currentLot.product?.name,
-            quantity: completedQty || currentLot.completedQty || currentLot.plannedQty,
-            date: new Date(currentLot.startedAt).toISOString().split('T')[0],
-            lineCode: currentLot.lineCode || undefined,
-            workerName: currentLot.worker?.name,
+            lotNumber: (selectedHistoryLot || currentLot)!.lotNumber,
+            processCode: (selectedHistoryLot || currentLot)!.processCode,
+            productCode: (selectedHistoryLot || currentLot)!.product?.code,
+            productName: (selectedHistoryLot || currentLot)!.product?.name,
+            quantity: selectedHistoryLot ? selectedHistoryLot.completedQty : (completedQty || currentLot!.completedQty || currentLot!.plannedQty),
+            date: new Date((selectedHistoryLot || currentLot)!.startedAt).toISOString().split('T')[0],
+            lineCode: (selectedHistoryLot || currentLot)!.lineCode || undefined,
+            workerName: (selectedHistoryLot || currentLot)!.worker?.name,
           }}
           onPrint={() => {
             toast.success('라벨 인쇄 요청 완료')

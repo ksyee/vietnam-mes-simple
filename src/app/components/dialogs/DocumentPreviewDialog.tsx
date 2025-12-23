@@ -22,6 +22,18 @@ import { toast } from 'sonner'
 import { jsPDF } from 'jspdf'
 import QRCode from 'qrcode'
 import JsBarcode from 'jsbarcode'
+import { registerKoreanFont } from '@/lib/koreanFont'
+import { translate, getStoredLocale } from '@/lib/i18n'
+
+// ============================================
+// i18n Helper
+// 생산 전표는 공식 문서이므로 항상 한국어로 출력
+// ============================================
+
+function tr(key: string, params?: Record<string, string | number>): string {
+  // 생산 문서는 항상 한국어로 출력 (회사 표준)
+  return translate('ko', key, params)
+}
 
 // ============================================
 // Types (Barcord document_generator.py 참조)
@@ -80,19 +92,7 @@ const PAGE_CONFIG = {
   },
 }
 
-const PROCESS_NAMES: Record<string, string> = {
-  MO: '자재출고',
-  CA: '자동절압착',
-  MC: '수동압착',
-  MS: '미드스플라이스',
-  SB: '서브조립',
-  SP: '제품조립제공부품',
-  PA: '제품조립',
-  HS: '열수축',
-  CI: '회로검사',
-  VI: '육안검사',
-  CQ: '압착검사',
-}
+// PROCESS_NAMES는 i18n 함수 tr('process.XX')로 대체됨
 
 // ============================================
 // Component
@@ -135,152 +135,228 @@ export function DocumentPreviewDialog({
         format: 'a4',
       })
 
+      // 한글 폰트 등록
+      const fontRegistered = await registerKoreanFont(pdf)
+      if (!fontRegistered) {
+        console.warn('한글 폰트 등록 실패, 기본 폰트 사용')
+      }
+
       const { margin } = PAGE_CONFIG
       const contentWidth = PAGE_CONFIG.width - margin.left - margin.right
       let y = margin.top
 
       // ========================================
-      // 1. 헤더 영역 - 제목 및 날짜
+      // 1. 헤더 영역 - 제목 (Barcord 스타일, i18n)
       // ========================================
-      pdf.setFontSize(18)
+      pdf.setFontSize(20)
       pdf.setTextColor(0, 0, 0)
-      pdf.text('생산 전표', PAGE_CONFIG.width / 2, y, { align: 'center' })
+      pdf.text(tr('document.title'), PAGE_CONFIG.width / 2, y, { align: 'center' })
+      y += 10
+
+      // ========================================
+      // 2. 기본 정보 섹션 (Barcord 4열 테이블 스타일, i18n)
+      // ========================================
+      pdf.setFontSize(11)
+      pdf.setTextColor(25, 118, 210) // #1976d2
+      pdf.text(tr('document.basic_info'), margin.left, y)
       y += 6
 
-      pdf.setFontSize(10)
-      pdf.setTextColor(128, 128, 128)
-      pdf.text('Production Slip', PAGE_CONFIG.width / 2, y, { align: 'center' })
-      y += 8
+      // 4열 테이블 (라벨 | 값 | 라벨 | 값)
+      const labelWidth = 22
+      const valueWidth = 68
+      const tableRowHeight = 8
+      const dateStr = formatDateWithTime(data.productionDate)
 
-      // 구분선
-      pdf.setDrawColor(200, 200, 200)
-      pdf.setLineWidth(0.5)
-      pdf.line(margin.left, y, PAGE_CONFIG.width - margin.right, y)
-      y += 8
+      // 테이블 그리기 함수
+      const drawInfoRow = (
+        label1: string, value1: string,
+        label2: string, value2: string,
+        rowY: number
+      ) => {
+        // 배경색
+        pdf.setFillColor(227, 242, 253) // #e3f2fd
+        pdf.rect(margin.left, rowY, labelWidth, tableRowHeight, 'F')
+        pdf.rect(margin.left + labelWidth + valueWidth, rowY, labelWidth, tableRowHeight, 'F')
 
-      // ========================================
-      // 2. 기본 정보 섹션 (2열 그리드)
-      // ========================================
-      const colWidth = contentWidth / 2
-      const rowHeight = 7
+        // 테두리
+        pdf.setDrawColor(189, 189, 189) // #bdbdbd
+        pdf.setLineWidth(0.3)
+        pdf.rect(margin.left, rowY, labelWidth, tableRowHeight, 'S')
+        pdf.rect(margin.left + labelWidth, rowY, valueWidth, tableRowHeight, 'S')
+        pdf.rect(margin.left + labelWidth + valueWidth, rowY, labelWidth, tableRowHeight, 'S')
+        pdf.rect(margin.left + labelWidth * 2 + valueWidth, rowY, valueWidth, tableRowHeight, 'S')
 
-      // 좌측 컬럼
-      const leftItems = [
-        { label: 'LOT 번호', value: data.lotNumber },
-        { label: '공정', value: `${data.processCode} (${data.processName})` },
-        { label: '품번', value: data.productCode },
-        { label: '품명', value: data.productName },
-      ]
+        // 라벨 텍스트
+        pdf.setFontSize(9)
+        pdf.setTextColor(21, 101, 192) // #1565c0
+        pdf.text(label1, margin.left + labelWidth / 2, rowY + 5.5, { align: 'center' })
+        pdf.text(label2, margin.left + labelWidth + valueWidth + labelWidth / 2, rowY + 5.5, { align: 'center' })
 
-      // 우측 컬럼
-      const rightItems = [
-        { label: '작업일', value: formatDate(data.productionDate) },
-        { label: '라인', value: data.lineCode || '-' },
-        { label: '작업자', value: data.workerName || '-' },
-        { label: '절압품번', value: data.crimpProductCode || '-' },
-      ]
-
-      pdf.setFontSize(9)
-
-      for (let i = 0; i < Math.max(leftItems.length, rightItems.length); i++) {
-        // 좌측
-        if (leftItems[i]) {
-          pdf.setTextColor(100, 100, 100)
-          pdf.text(leftItems[i].label, margin.left, y)
-          pdf.setTextColor(0, 0, 0)
-          pdf.text(leftItems[i].value, margin.left + 25, y)
-        }
-
-        // 우측
-        if (rightItems[i]) {
-          pdf.setTextColor(100, 100, 100)
-          pdf.text(rightItems[i].label, margin.left + colWidth, y)
-          pdf.setTextColor(0, 0, 0)
-          pdf.text(rightItems[i].value, margin.left + colWidth + 25, y)
-        }
-
-        y += rowHeight
+        // 값 텍스트
+        pdf.setTextColor(0, 0, 0)
+        pdf.text(truncate(value1, 30), margin.left + labelWidth + 2, rowY + 5.5)
+        pdf.text(truncate(value2, 30), margin.left + labelWidth * 2 + valueWidth + 2, rowY + 5.5)
       }
 
-      y += 5
+      // 기본 정보 행 (i18n 적용)
+      const processName = tr(`process.${data.processCode}`) || data.processName
+      drawInfoRow(tr('document.voucher_number'), data.lotNumber, tr('document.process'), `${data.processCode} - ${processName}`, y)
+      y += tableRowHeight
+      drawInfoRow(tr('document.issue_date'), dateStr, tr('document.line'), data.lineCode || '-', y)
+      y += tableRowHeight
+      drawInfoRow(tr('document.product_code'), data.productCode, tr('document.product_name'), truncate(data.productName, 25), y)
+      y += tableRowHeight
+
+      // CA 공정인 경우 절압착품번/완제품품번 추가 (i18n 적용)
+      if (data.processCode === 'CA' && data.crimpProductCode) {
+        drawInfoRow(tr('document.crimp_product_code'), data.crimpProductCode, tr('document.finished_product_code'), data.productCode, y)
+        y += tableRowHeight
+      }
+
+      drawInfoRow(tr('document.operator'), data.workerName || '-', tr('document.remarks'), '-', y)
+      y += tableRowHeight + 6
 
       // ========================================
-      // 3. 수량 정보 섹션 (박스 3개)
+      // 3. 수량 정보 섹션 (Barcord 4열 테이블 스타일, i18n)
       // ========================================
-      const boxWidth = contentWidth / 3 - 3
-      const boxHeight = 18
+      pdf.setFontSize(11)
+      pdf.setTextColor(25, 118, 210)
+      pdf.text(tr('document.quantity_info'), margin.left, y)
+      y += 6
 
-      // 계획 수량 박스
-      drawQuantityBox(pdf, margin.left, y, boxWidth, boxHeight, '계획 수량', data.plannedQuantity ?? data.quantity, data.unit, '#4CAF50')
+      // 수량 정보 테이블
+      const drawQtyRow = (
+        label1: string, value1: string,
+        label2: string, value2: string,
+        rowY: number
+      ) => {
+        // 배경색 (주황색 계열)
+        pdf.setFillColor(255, 243, 224) // #fff3e0
+        pdf.rect(margin.left, rowY, labelWidth, tableRowHeight, 'F')
+        pdf.rect(margin.left + labelWidth + valueWidth, rowY, labelWidth, tableRowHeight, 'F')
 
-      // 완료 수량 박스
-      drawQuantityBox(pdf, margin.left + boxWidth + 4, y, boxWidth, boxHeight, '완료 수량', data.completedQuantity ?? data.quantity, data.unit, '#2196F3')
+        // 테두리
+        pdf.setDrawColor(189, 189, 189)
+        pdf.setLineWidth(0.3)
+        pdf.rect(margin.left, rowY, labelWidth, tableRowHeight, 'S')
+        pdf.rect(margin.left + labelWidth, rowY, valueWidth, tableRowHeight, 'S')
+        pdf.rect(margin.left + labelWidth + valueWidth, rowY, labelWidth, tableRowHeight, 'S')
+        pdf.rect(margin.left + labelWidth * 2 + valueWidth, rowY, valueWidth, tableRowHeight, 'S')
 
-      // 불량 수량 박스
-      drawQuantityBox(pdf, margin.left + (boxWidth + 4) * 2, y, boxWidth, boxHeight, '불량 수량', data.defectQuantity ?? 0, data.unit, '#F44336')
+        // 라벨 텍스트
+        pdf.setFontSize(9)
+        pdf.setTextColor(230, 81, 0) // #e65100
+        pdf.text(label1, margin.left + labelWidth / 2, rowY + 5.5, { align: 'center' })
+        pdf.text(label2, margin.left + labelWidth + valueWidth + labelWidth / 2, rowY + 5.5, { align: 'center' })
 
-      y += boxHeight + 8
+        // 값 텍스트 (우측 정렬)
+        pdf.setTextColor(0, 0, 0)
+        pdf.text(value1, margin.left + labelWidth + valueWidth - 2, rowY + 5.5, { align: 'right' })
+        pdf.text(value2, margin.left + labelWidth * 2 + valueWidth * 2 - 2, rowY + 5.5, { align: 'right' })
+      }
+
+      const plannedQty = data.plannedQuantity ?? data.quantity
+      const completedQty = data.completedQuantity ?? data.quantity
+      const defectQty = data.defectQuantity ?? 0
+
+      drawQtyRow(
+        tr('document.planned_qty'), `${plannedQty.toLocaleString()} ${data.unit}`,
+        tr('document.completed_qty'), `${completedQty.toLocaleString()} ${data.unit}`,
+        y
+      )
+      y += tableRowHeight
+      drawQtyRow(
+        tr('document.defect_qty'), `${defectQty.toLocaleString()} ${data.unit}`,
+        tr('document.carry_over_out'), `0 ${data.unit}`,
+        y
+      )
+      y += tableRowHeight + 6
 
       // ========================================
-      // 4. 투입 자재 테이블
+      // 4. 투입 자재 / 투입 이력 테이블 (Barcord 스타일, i18n)
       // ========================================
       if (showMaterials && data.inputMaterials.length > 0) {
         pdf.setFontSize(11)
-        pdf.setTextColor(0, 0, 0)
-        pdf.text('투입 자재', margin.left, y)
+        pdf.setTextColor(25, 118, 210) // #1976d2
+        pdf.text(tr('document.input_materials'), margin.left, y)
         y += 6
 
-        // 테이블 헤더
-        const tableHeaders = ['No', 'LOT 번호', '품번', '품명', '수량', '단위', '구분']
-        const colWidths = [8, 28, 25, 45, 18, 12, 18]
+        // 테이블 헤더 (Barcord 스타일 - 파란색 배경, i18n 적용)
+        const tableHeaders = [
+          tr('document.table_no'),
+          tr('document.table_type'),
+          tr('document.table_product_code'),
+          tr('document.table_product_name'),
+          tr('document.table_lot'),
+          tr('document.table_qty')
+        ]
+        const colWidths = [8, 15, 30, 40, 58, 25]
+        const headerHeight = 7
 
-        pdf.setFillColor(240, 240, 240)
-        pdf.rect(margin.left, y, contentWidth, 6, 'F')
+        // 헤더 배경색 (파란색)
+        pdf.setFillColor(25, 118, 210) // #1976d2
+        pdf.rect(margin.left, y, contentWidth, headerHeight, 'F')
 
-        pdf.setFontSize(8)
-        pdf.setTextColor(0, 0, 0)
+        // 헤더 텍스트 (흰색)
+        pdf.setFontSize(9)
+        pdf.setTextColor(255, 255, 255)
 
         let x = margin.left
         for (let i = 0; i < tableHeaders.length; i++) {
-          pdf.text(tableHeaders[i], x + 1, y + 4)
+          pdf.text(tableHeaders[i], x + colWidths[i] / 2, y + 5, { align: 'center' })
           x += colWidths[i]
         }
 
-        y += 6
+        y += headerHeight
 
         // 테이블 데이터
+        const dataRowHeight = 6
         for (let i = 0; i < Math.min(data.inputMaterials.length, 15); i++) {
           const mat = data.inputMaterials[i]
 
-          // 줄무늬 배경
+          // 줄무늬 배경 (짝수행)
           if (i % 2 === 1) {
-            pdf.setFillColor(250, 250, 250)
-            pdf.rect(margin.left, y, contentWidth, 5, 'F')
+            pdf.setFillColor(250, 250, 250) // #fafafa
+            pdf.rect(margin.left, y, contentWidth, dataRowHeight, 'F')
           }
 
-          pdf.setDrawColor(220, 220, 220)
-          pdf.rect(margin.left, y, contentWidth, 5, 'S')
+          // 테두리
+          pdf.setDrawColor(189, 189, 189) // #bdbdbd
+          pdf.setLineWidth(0.3)
+          pdf.rect(margin.left, y, contentWidth, dataRowHeight, 'S')
 
-          pdf.setFontSize(7)
+          pdf.setFontSize(8)
           pdf.setTextColor(0, 0, 0)
+
+          // 유형 레이블 (i18n 적용)
+          let typeLabel = mat.sourceType === 'material' ? tr('document.type_material') : tr('document.type_history')
+          if (mat.processCode && mat.sourceType === 'production') {
+            typeLabel = mat.processCode  // 공정 코드는 그대로 표시 (예: CA, MC)
+          }
 
           x = margin.left
           const rowData = [
             String(i + 1),
-            truncate(mat.lotNumber, 12),
-            truncate(mat.productCode, 10),
-            truncate(mat.name, 20),
-            mat.quantity.toLocaleString(),
-            mat.unit,
-            mat.sourceType === 'material' ? '자재' : '생산',
+            typeLabel,
+            truncate(mat.productCode, 12),
+            truncate(mat.name, 18),
+            truncate(mat.lotNumber, 25),
+            `${mat.quantity.toLocaleString()} ${mat.unit}`,
           ]
 
           for (let j = 0; j < rowData.length; j++) {
-            pdf.text(rowData[j], x + 1, y + 3.5)
+            // No와 유형은 중앙정렬, 수량은 우측정렬
+            if (j === 0 || j === 1) {
+              pdf.text(rowData[j], x + colWidths[j] / 2, y + 4, { align: 'center' })
+            } else if (j === rowData.length - 1) {
+              pdf.text(rowData[j], x + colWidths[j] - 2, y + 4, { align: 'right' })
+            } else {
+              pdf.text(rowData[j], x + 2, y + 4)
+            }
             x += colWidths[j]
           }
 
-          y += 5
+          y += dataRowHeight
         }
 
         if (data.inputMaterials.length > 15) {
@@ -294,15 +370,17 @@ export function DocumentPreviewDialog({
       }
 
       // ========================================
-      // 5. 바코드 영역 (QR + 1D)
+      // 5. 바코드 영역 (Barcord 스타일)
       // ========================================
-      const barcodeY = Math.max(y, PAGE_CONFIG.height - 80)
+      const barcodeY = Math.max(y, PAGE_CONFIG.height - 85)
 
       if (showQR || showBarcode) {
-        pdf.setDrawColor(200, 200, 200)
-        pdf.setLineWidth(0.3)
-        pdf.line(margin.left, barcodeY - 5, PAGE_CONFIG.width - margin.right, barcodeY - 5)
+        pdf.setFontSize(11)
+        pdf.setTextColor(25, 118, 210) // #1976d2
+        pdf.text(tr('document.barcode_section'), margin.left, barcodeY)
       }
+
+      const barcodeContentY = barcodeY + 5
 
       // QR 코드
       if (showQR) {
@@ -323,11 +401,7 @@ export function DocumentPreviewDialog({
           })
 
           const qrDataUrl = qrCanvas.toDataURL('image/png')
-          pdf.addImage(qrDataUrl, 'PNG', margin.left, barcodeY, 30, 30)
-
-          pdf.setFontSize(7)
-          pdf.setTextColor(128, 128, 128)
-          pdf.text('QR Code', margin.left + 15, barcodeY + 33, { align: 'center' })
+          pdf.addImage(qrDataUrl, 'PNG', margin.left, barcodeContentY, 25, 25)
         } catch (e) {
           console.error('QR 생성 실패:', e)
         }
@@ -340,44 +414,61 @@ export function DocumentPreviewDialog({
           JsBarcode(barcodeCanvas, data.lotNumber, {
             format: 'CODE128',
             width: 2,
-            height: 50,
+            height: 40,
             displayValue: true,
-            fontSize: 12,
+            fontSize: 10,
             margin: 5,
           })
 
           const barcodeDataUrl = barcodeCanvas.toDataURL('image/png')
-          const barcodeX = showQR ? margin.left + 45 : margin.left
-          const barcodeWidth = showQR ? contentWidth - 50 : contentWidth
+          const barcodeX = showQR ? margin.left + 35 : margin.left
+          const barcodeWidth = showQR ? 100 : 130
 
-          pdf.addImage(barcodeDataUrl, 'PNG', barcodeX, barcodeY, Math.min(barcodeWidth, 120), 25)
+          pdf.addImage(barcodeDataUrl, 'PNG', barcodeX, barcodeContentY, barcodeWidth, 20)
         } catch (e) {
           console.error('바코드 생성 실패:', e)
         }
       }
 
-      // ========================================
-      // 6. 서명란
-      // ========================================
-      const signY = PAGE_CONFIG.height - margin.bottom - 25
-
+      // 바코드 번호 표시
       pdf.setFontSize(9)
       pdf.setTextColor(0, 0, 0)
+      pdf.text(data.lotNumber, PAGE_CONFIG.width / 2, barcodeContentY + 28, { align: 'center' })
 
-      const signBoxWidth = contentWidth / 3 - 5
+      // ========================================
+      // 6. 서명란 (Barcord 스타일 - 작성/검토/승인)
+      // ========================================
+      const signY = PAGE_CONFIG.height - margin.bottom - 22
+      const signBoxWidth = 40
+      const signBoxHeight = 15
+      const signGap = 5
+      const totalSignWidth = signBoxWidth * 3 + signGap * 2
+      const signStartX = (PAGE_CONFIG.width - totalSignWidth) / 2
 
-      // 작업자 서명
-      pdf.text('작업자', margin.left + signBoxWidth / 2, signY, { align: 'center' })
-      pdf.setDrawColor(150, 150, 150)
-      pdf.rect(margin.left, signY + 2, signBoxWidth, 15, 'S')
+      // 헤더 배경
+      pdf.setFillColor(245, 245, 245) // #f5f5f5
+      pdf.rect(signStartX, signY, signBoxWidth, 7, 'F')
+      pdf.rect(signStartX + signBoxWidth + signGap, signY, signBoxWidth, 7, 'F')
+      pdf.rect(signStartX + (signBoxWidth + signGap) * 2, signY, signBoxWidth, 7, 'F')
 
-      // 검사자 서명
-      pdf.text('검사자', margin.left + signBoxWidth + 10 + signBoxWidth / 2, signY, { align: 'center' })
-      pdf.rect(margin.left + signBoxWidth + 10, signY + 2, signBoxWidth, 15, 'S')
+      // 테두리
+      pdf.setDrawColor(189, 189, 189) // #bdbdbd
+      pdf.setLineWidth(0.5)
+      pdf.rect(signStartX, signY, signBoxWidth, 7 + signBoxHeight, 'S')
+      pdf.rect(signStartX + signBoxWidth + signGap, signY, signBoxWidth, 7 + signBoxHeight, 'S')
+      pdf.rect(signStartX + (signBoxWidth + signGap) * 2, signY, signBoxWidth, 7 + signBoxHeight, 'S')
 
-      // 승인자 서명
-      pdf.text('승인자', margin.left + (signBoxWidth + 10) * 2 + signBoxWidth / 2, signY, { align: 'center' })
-      pdf.rect(margin.left + (signBoxWidth + 10) * 2, signY + 2, signBoxWidth, 15, 'S')
+      // 구분선
+      pdf.line(signStartX, signY + 7, signStartX + signBoxWidth, signY + 7)
+      pdf.line(signStartX + signBoxWidth + signGap, signY + 7, signStartX + signBoxWidth * 2 + signGap, signY + 7)
+      pdf.line(signStartX + (signBoxWidth + signGap) * 2, signY + 7, signStartX + signBoxWidth * 3 + signGap * 2, signY + 7)
+
+      // 라벨 텍스트 (i18n 적용)
+      pdf.setFontSize(10)
+      pdf.setTextColor(0, 0, 0)
+      pdf.text(tr('document.sign_create'), signStartX + signBoxWidth / 2, signY + 5, { align: 'center' })
+      pdf.text(tr('document.sign_review'), signStartX + signBoxWidth + signGap + signBoxWidth / 2, signY + 5, { align: 'center' })
+      pdf.text(tr('document.sign_approve'), signStartX + (signBoxWidth + signGap) * 2 + signBoxWidth / 2, signY + 5, { align: 'center' })
 
       // ========================================
       // 7. 푸터
@@ -559,56 +650,19 @@ function formatDate(date: Date): string {
   })
 }
 
+function formatDateWithTime(date: Date): string {
+  return date.toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str
   return str.substring(0, maxLen - 2) + '..'
-}
-
-function drawQuantityBox(
-  pdf: jsPDF,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  label: string,
-  value: number,
-  unit: string,
-  color: string
-): void {
-  // 배경
-  pdf.setFillColor(250, 250, 250)
-  pdf.roundedRect(x, y, width, height, 2, 2, 'F')
-
-  // 테두리
-  const rgb = hexToRgb(color)
-  if (rgb) {
-    pdf.setDrawColor(rgb.r, rgb.g, rgb.b)
-  }
-  pdf.setLineWidth(0.5)
-  pdf.roundedRect(x, y, width, height, 2, 2, 'S')
-
-  // 라벨
-  pdf.setFontSize(8)
-  pdf.setTextColor(100, 100, 100)
-  pdf.text(label, x + width / 2, y + 5, { align: 'center' })
-
-  // 값
-  pdf.setFontSize(14)
-  if (rgb) {
-    pdf.setTextColor(rgb.r, rgb.g, rgb.b)
-  }
-  pdf.text(`${value.toLocaleString()} ${unit}`, x + width / 2, y + 13, { align: 'center' })
-}
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-  return result
-    ? {
-        r: parseInt(result[1], 16),
-        g: parseInt(result[2], 16),
-        b: parseInt(result[3], 16),
-      }
-    : null
 }
 
 export default DocumentPreviewDialog

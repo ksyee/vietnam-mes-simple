@@ -25,7 +25,8 @@
       "Bash(node:*)",
       "Bash(ls:*)",
       "Bash(find:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(pnpm --version:*)"
     ]
   }
 }

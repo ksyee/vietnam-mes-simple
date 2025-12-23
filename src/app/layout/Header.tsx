@@ -24,8 +24,8 @@ export const Header = () => {
     if (parts.length === 0 || parts[0] === 'dashboard') return '대시보드';
     
     if (parts[0] === 'material') {
-      if (parts[1] === 'receiving') return '자재 관리 > 자재 입고';
-      if (parts[1] === 'stock') return '자재 관리 > 재고 현황';
+      if (parts[1] === 'receiving') return '자재 관리 > 공정 자재 스캔';
+      if (parts[1] === 'stock') return '자재 관리 > 자재 현황';
       return '자재 관리';
     }
 
